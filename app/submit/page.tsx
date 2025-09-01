@@ -2,7 +2,7 @@
 "use client"
 
 export const dynamic = "force-dynamic"
-export const revalidate = 0
+export const revalidate = false
 
 import { useState } from "react"
 import { useTranslation, type Language } from "@/lib/i18n"
