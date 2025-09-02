@@ -3,10 +3,11 @@
 
 export const dynamic = "force-dynamic"
 export const revalidate = false
+export const fetchCache = "force-no-store"
 
 import { useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import nextDynamic from "next/dynamic"
+import NextDynamic from "next/dynamic"
 import Navigation from "@/components/Navigation"
 import SearchFilters, { type SearchFilters as UIFilters } from "@/components/SearchFilters"
 import { useSearch } from "@/hooks/useSearch"
@@ -18,8 +19,8 @@ import { Map, Grid, Search as SearchIcon } from "lucide-react"
 import type { Place } from "@/lib/firestore"
 import { useTranslation, type Language } from "@/lib/i18n"
 
-// Load MapView only on the client (prevents SSR/window issues)
-const MapView = nextDynamic(() => import("@/components/MapView"), { ssr: false })
+// ✅ Load MapView only on the client (prevents SSR/window issues)
+const MapView = NextDynamic(() => import("@/components/MapView"), { ssr: false })
 
 // ----- Sort types: UI vs Internal (hook) -----
 type UISort = "relevance" | "newest" | "oldest" | "alphabetical"

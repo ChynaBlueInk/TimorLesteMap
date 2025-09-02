@@ -3,11 +3,11 @@
 
 export const dynamic = "force-dynamic"
 export const revalidate = false
-
+export const fetchCache = "force-no-store"
 
 import { useState, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import nextDynamic from "next/dynamic"
+import NextDynamic from "next/dynamic"   // ✅ alias to avoid conflict
 import { useSearch } from "@/hooks/useSearch"
 import SearchFilters from "@/components/SearchFilters"
 import { useTranslation, type Language } from "@/lib/i18n"
@@ -20,8 +20,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { List, MapPin, Loader2, X, Grid, Map } from "lucide-react"
 import type { Place } from "@/lib/firestore"
 
-// ✅ no name clash: alias the import
-const MapView = nextDynamic(() => import("@/components/MapView"), { ssr: false })
+// ✅ use the alias
+const MapView = NextDynamic(() => import("@/components/MapView"), { ssr: false })
+
 
 function MapPageContent() {
   const router = useRouter()

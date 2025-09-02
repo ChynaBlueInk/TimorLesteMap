@@ -3,16 +3,17 @@
 
 export const dynamic = "force-dynamic"
 export const revalidate = false
+export const fetchCache = "force-no-store"
 
 import { useEffect, useState } from "react"
-import nextDynamic from "next/dynamic"
+import NextDynamic from "next/dynamic"
 import Navigation from "@/components/Navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Loader2, Navigation as NavIcon, MapPin } from "lucide-react"
 import { getNearby, getPlaces, type Place } from "@/lib/firestore"
 
-const MapView = nextDynamic(() => import("@/components/MapView"), { ssr: false })
+const MapView = NextDynamic(() => import("@/components/MapView"), { ssr: false })
 
 export default function NearMePage() {
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null)
