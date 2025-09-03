@@ -2,7 +2,7 @@
 // Server Component wrapper (no "use client" here!)
 
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
+// REMOVE this line: export const revalidate = 0;
 export const fetchCache = "force-no-store";
 
 import NearMeClient from "./NearMeClient";
