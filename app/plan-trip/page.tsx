@@ -24,7 +24,6 @@ export default function PlanTripPage(){
 
   return (
     <div className="min-h-screen bg-background">
-      <Navigation language={language} onLanguageChange={setLanguage} />
 
       <div className="container mx-auto px-4 py-8">
         <div className="max-w-4xl mx-auto">

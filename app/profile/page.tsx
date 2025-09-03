@@ -39,7 +39,8 @@ export default function ProfilePage() {
       if (!user) return
 
       try {
-        const userPlaces = await getPlaces({ ownerId: user.uid })
+        const allPlaces = await getPlaces()
+        const userPlaces = allPlaces.filter((p) => p.ownerId === user.uid)
         setPlaces(userPlaces)
       } catch (error) {
         console.error("Error loading user places:", error)
@@ -87,7 +88,6 @@ export default function ProfilePage() {
   return (
     <ProtectedRoute requireAuth>
       <div className="min-h-screen bg-background">
-        <Navigation language={language} onLanguageChange={setLanguage} />
 
         <div className="container mx-auto px-4 py-8">
           <div className="max-w-6xl mx-auto">
@@ -295,7 +295,7 @@ function PlacesList({
                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
               />
               <div className="absolute top-2 right-2">
-                <Badge className={getStatusColor(place.status)}>{t(`status.${place.status}`)}</Badge>
+                <Badge className={getStatusColor(place.status || "")}>{t(`status.${place.status}`)}</Badge>
               </div>
             </div>
           )}

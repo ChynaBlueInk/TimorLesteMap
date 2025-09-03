@@ -56,7 +56,6 @@ export default function AdminPage() {
     return (
       <ProtectedRoute requireAdmin>
         <div className="min-h-screen bg-background">
-          <Navigation language={language} onLanguageChange={setLanguage} />
           <div className="flex items-center justify-center h-[calc(100vh-4rem)]">
             <div className="text-center">
               <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
@@ -71,7 +70,6 @@ export default function AdminPage() {
   return (
     <ProtectedRoute requireAdmin>
       <div className="min-h-screen bg-background">
-        <Navigation language={language} onLanguageChange={setLanguage} />
 
         <div className="container mx-auto px-4 py-8">
           <div className="max-w-7xl mx-auto">

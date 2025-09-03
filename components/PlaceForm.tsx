@@ -1,3 +1,4 @@
+// components/PlaceForm.tsx
 "use client"
 
 import type React from "react"
@@ -36,11 +37,11 @@ export default function PlaceForm({ place, language = "en", onCancel }: PlaceFor
     description: place?.description || "",
     category: place?.category || ("history" as const),
     municipality: place?.municipality || "",
-    suco: place?.suco || "",
+    suco: place?.suco || "", // ← optional now
     coords: place?.coords || { lat: 0, lng: 0 },
     images: place?.images || [],
     sources: place?.sources || [],
-    languages: place?.languages || (["en"] as ("tet" | "en" | "pt")[]),
+    languages: place?.languages || ([] as ("tet" | "en" | "pt")[]), // ← optional now (was ["en"])
     period: place?.period || { fromYear: undefined, toYear: undefined },
   })
 
@@ -50,54 +51,51 @@ export default function PlaceForm({ place, language = "en", onCancel }: PlaceFor
 
   const handleInputChange = (field: string, value: any) => {
     setFormData((prev) => ({ ...prev, [field]: value }))
-    // Clear error when user starts typing
-    if (errors[field]) {
-      setErrors((prev) => ({ ...prev, [field]: "" }))
-    }
+    if (errors[field]) setErrors((prev) => ({ ...prev, [field]: "" }))
   }
 
   const handleLanguageChange = (lang: "tet" | "en" | "pt", checked: boolean) => {
     if (checked) {
-      setFormData((prev) => ({
-        ...prev,
-        languages: [...prev.languages, lang],
-      }))
+      setFormData((prev) => ({ ...prev, languages: [...prev.languages, lang] }))
     } else {
-      setFormData((prev) => ({
-        ...prev,
-        languages: prev.languages.filter((l) => l !== lang),
-      }))
+      setFormData((prev) => ({ ...prev, languages: prev.languages.filter((l) => l !== lang) }))
     }
   }
 
   const addSource = () => {
     if (sourceInput.trim()) {
-      setFormData((prev) => ({
-        ...prev,
-        sources: [...prev.sources, sourceInput.trim()],
-      }))
+      setFormData((prev) => ({ ...prev, sources: [...prev.sources, sourceInput.trim()] }))
       setSourceInput("")
     }
   }
 
   const removeSource = (index: number) => {
-    setFormData((prev) => ({
-      ...prev,
-      sources: prev.sources.filter((_, i) => i !== index),
-    }))
+    setFormData((prev) => ({ ...prev, sources: prev.sources.filter((_, i) => i !== index) }))
   }
 
+  // Relax validation: treat languages and suco as optional even if placeSchema requires them
   const validateForm = () => {
     try {
       placeSchema.parse(formData)
       setErrors({})
       return true
     } catch (error: any) {
+      const remaining = (error?.errors as Array<{ path: (string | number)[]; message: string }> | undefined)?.filter(
+        (err) => {
+          const root = String(err.path?.[0] ?? "")
+          return root !== "languages" && root !== "suco"
+        }
+      ) ?? []
+
+      if (remaining.length === 0) {
+        setErrors({})
+        return true
+      }
+
       const fieldErrors: Record<string, string> = {}
-      error.errors?.forEach((err: any) => {
-        const field = err.path.join(".")
-        fieldErrors[field] = err.message
-      })
+      for (const err of remaining) {
+        fieldErrors[err.path.join(".")] = err.message
+      }
       setErrors(fieldErrors)
       return false
     }
@@ -111,18 +109,16 @@ export default function PlaceForm({ place, language = "en", onCancel }: PlaceFor
       return
     }
 
-    if (!validateForm()) {
-      return
-    }
+    if (!validateForm()) return
 
     setLoading(true)
-
     try {
       const placeData = {
         ...formData,
         ownerId: user.uid,
-        status: userProfile?.role === "admin" ? "published" : ("pending" as const),
+        status: "published" as const, // ← auto-publish (no review)
         featured: place?.featured || false,
+        // you can also add a `reviewed: true` flag here if your UI expects it
       }
 
       if (place?.id) {
@@ -213,7 +209,7 @@ export default function PlaceForm({ place, language = "en", onCancel }: PlaceFor
             </div>
 
             <div className="space-y-2">
-              <Label>Languages *</Label>
+              <Label>Languages</Label> {/* ← no asterisk; optional */}
               <div className="flex flex-wrap gap-4">
                 {languages.map((lang) => (
                   <div key={lang.code} className="flex items-center space-x-2">
@@ -228,7 +224,7 @@ export default function PlaceForm({ place, language = "en", onCancel }: PlaceFor
                   </div>
                 ))}
               </div>
-              {errors.languages && <p className="text-sm text-destructive">{errors.languages}</p>}
+              {/* no languages error shown (optional) */}
             </div>
           </div>
         </CardContent>
@@ -254,7 +250,7 @@ export default function PlaceForm({ place, language = "en", onCancel }: PlaceFor
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="suco">{t("form.suco")} *</Label>
+              <Label htmlFor="suco">{t("form.suco")}</Label> {/* ← no asterisk; optional */}
               <Input
                 id="suco"
                 value={formData.suco}
@@ -262,7 +258,7 @@ export default function PlaceForm({ place, language = "en", onCancel }: PlaceFor
                 placeholder="Enter suco/village name"
                 className={errors.suco ? "border-destructive" : ""}
               />
-              {errors.suco && <p className="text-sm text-destructive">{errors.suco}</p>}
+              {/* no suco error shown (optional) */}
             </div>
           </div>
 
@@ -376,12 +372,12 @@ export default function PlaceForm({ place, language = "en", onCancel }: PlaceFor
         )}
       </div>
 
+      {/* Note: removed the "review before publishing" bullet */}
       {!place && (
         <div className="text-sm text-muted-foreground bg-muted p-4 rounded-lg">
           <p className="font-medium mb-2">Before you submit:</p>
           <ul className="space-y-1 text-xs">
             <li>• Make sure all information is accurate and complete</li>
-            <li>• Your submission will be reviewed before being published</li>
             <li>• You can edit your places anytime from your profile</li>
             <li>• Please respect cultural sensitivity and accuracy</li>
           </ul>

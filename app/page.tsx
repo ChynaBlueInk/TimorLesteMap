@@ -44,7 +44,6 @@ export default function HomePage(){
 
   return (
     <div className="min-h-screen bg-background">
-      <Navigation language={language} onLanguageChange={setLanguage} />
 
       {/* Hero Section */}
       <section className="relative py-20 px-4 bg-gradient-to-br from-primary/5 via-background to-secondary/5">

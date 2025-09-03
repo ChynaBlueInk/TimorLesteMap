@@ -47,7 +47,6 @@ export default function NearMeClient() {
 
   return (
     <div className="min-h-screen bg-background">
-      <Navigation />
       <div className="container mx-auto px-4 py-8">
         <div className="mb-6 flex items-center gap-2">
           <NavIcon className="h-6 w-6 text-primary" />

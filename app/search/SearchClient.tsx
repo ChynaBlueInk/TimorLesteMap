@@ -101,7 +101,6 @@ export default function SearchClient() {
   if (error) {
     return (
       <>
-        <Navigation language={language} onLanguageChange={setLanguage} />
         <div className="container mx-auto px-4 py-8">
           <Card>
             <CardContent className="p-8 text-center">
@@ -118,7 +117,6 @@ export default function SearchClient() {
 
   return (
     <div className="min-h-screen bg-background">
-      <Navigation language={language} onLanguageChange={setLanguage} />
 
       <div className="container mx-auto px-4 py-8">
         <div className="mb-8">

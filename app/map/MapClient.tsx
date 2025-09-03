@@ -63,7 +63,6 @@ function MapPageContent() {
   if (loading) {
     return (
       <div className="min-h-screen bg-background">
-        <Navigation language={language} onLanguageChange={setLanguage} />
         <div className="flex items-center justify-center h-[calc(100vh-4rem)]">
           <div className="text-center">
             <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
@@ -77,7 +76,6 @@ function MapPageContent() {
   if (error) {
     return (
       <div className="min-h-screen bg-background">
-        <Navigation language={language} onLanguageChange={setLanguage} />
         <div className="flex items-center justify-center h-[calc(100vh-4rem)]">
           <Card>
             <CardContent className="p-8 text-center">
@@ -107,7 +105,6 @@ function MapPageContent() {
 
   return (
     <div className="min-h-screen bg-background">
-      <Navigation language={language} onLanguageChange={setLanguage} />
 
       <div className="flex h-[calc(100vh-4rem)]">
         {/* Sidebar */}
