@@ -1,9 +1,18 @@
+// components/TripPlanner.tsx
 "use client"
 
 import { useState, useEffect } from "react"
 import { useAuth } from "@/hooks/useAuth"
 import { getPlaces, type Place } from "@/lib/firestore"
-import { createTrip, updateTrip, type Trip, type TripPlace, calculateTripStats } from "@/lib/trips"
+import {
+  createTrip,
+  updateTrip,
+  type Trip,
+  type TripPlace,
+  calculateTripStats,
+  type TransportMode,
+  type RoadCondition,
+} from "@/lib/trips"
 import { useTranslation, type Language } from "@/lib/i18n"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -27,13 +36,18 @@ interface TripPlannerProps {
 
 export default function TripPlanner({ trip, language = "en", onSave, onCancel }: TripPlannerProps) {
   const { user } = useAuth()
-  const { t } = useTranslation(language)
+  const { t } = useTranslation() // ✅ hook takes no args in this project
 
   const [availablePlaces, setAvailablePlaces] = useState<Place[]>([])
   const [selectedPlaces, setSelectedPlaces] = useState<TripPlace[]>(trip?.places || [])
   const [tripName, setTripName] = useState(trip?.name || "")
   const [tripDescription, setTripDescription] = useState(trip?.description || "")
   const [isPublic, setIsPublic] = useState(trip?.isPublic || false)
+
+  // Transport & road condition (optional on Trip, so provide defaults)
+  const [transportMode, setTransportMode] = useState<TransportMode>(trip?.transportMode ?? "car")
+  const [roadCondition, setRoadCondition] = useState<RoadCondition>(trip?.roadCondition ?? "mixed")
+
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [searchQuery, setSearchQuery] = useState("")
@@ -41,21 +55,46 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
 
   useEffect(() => {
     loadPlaces()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const loadPlaces = async () => {
     try {
-      const places = await getPlaces({ status: "published" })
+      const places = await getPlaces()
       setAvailablePlaces(places)
     } catch (error) {
       console.error("Error loading places:", error)
     }
   }
 
+  // Map Place.category -> allowed translation keys (remove "category.other")
+  const categoryKeyMap: Record<
+    string,
+    | "category.history"
+    | "category.culture"
+    | "category.nature"
+    | "category.food"
+    | "category.memorials"
+  > = {
+    history: "category.history",
+    culture: "category.culture",
+    nature: "category.nature",
+    food: "category.food",
+    memorials: "category.memorials",
+  }
+
+  const safeCategoryKey = (cat: string):
+    | "category.history"
+    | "category.culture"
+    | "category.nature"
+    | "category.food"
+    | "category.memorials" => categoryKeyMap[cat] ?? "category.nature"
+
   const filteredPlaces = availablePlaces.filter((place) => {
     const matchesSearch =
       place.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      place.municipality.toLowerCase().includes(searchQuery.toLowerCase())
+      (place.municipality?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false)
+
     const matchesCategory = categoryFilter === "all" || place.category === categoryFilter
     const notSelected = !selectedPlaces.some((tp) => tp.placeId === place.id)
 
@@ -82,17 +121,10 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
 
   const handleDragEnd = (result: any) => {
     if (!result.destination) return
-
     const items = Array.from(selectedPlaces)
     const [reorderedItem] = items.splice(result.source.index, 1)
     items.splice(result.destination.index, 0, reorderedItem)
-
-    // Update order numbers
-    const reorderedItems = items.map((item, index) => ({
-      ...item,
-      order: index,
-    }))
-
+    const reorderedItems = items.map((item, index) => ({ ...item, order: index }))
     setSelectedPlaces(reorderedItems)
   }
 
@@ -101,12 +133,10 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
       setError("You must be signed in to save trips")
       return
     }
-
     if (!tripName.trim()) {
       setError("Trip name is required")
       return
     }
-
     if (selectedPlaces.length === 0) {
       setError("Please add at least one place to your trip")
       return
@@ -116,12 +146,14 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
     setError("")
 
     try {
-      const tripData = {
+      const tripData: Omit<Trip, "id" | "createdAt" | "updatedAt"> = {
         name: tripName.trim(),
         description: tripDescription.trim(),
         places: selectedPlaces,
         ownerId: user.uid,
         isPublic,
+        transportMode,
+        roadCondition,
       }
 
       if (trip?.id) {
@@ -144,18 +176,24 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
     }
   }
 
-  const tripStats =
+  // Build a lightweight Trip for stats (includes mode & road)
+  const statsTrip: Trip | null =
     selectedPlaces.length > 0
-      ? calculateTripStats({
+      ? {
           id: "",
-          name: tripName,
+          name: tripName || "Untitled Trip",
+          description: tripDescription,
           places: selectedPlaces,
           ownerId: user?.uid || "",
           isPublic,
+          transportMode,
+          roadCondition,
           createdAt: new Date(),
           updatedAt: new Date(),
-        })
+        }
       : null
+
+  const tripStats = statsTrip ? calculateTripStats(statsTrip) : null
 
   const categories = [
     { value: "all", label: "All Categories" },
@@ -163,7 +201,7 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
     { value: "culture", label: t("category.culture") },
     { value: "nature", label: t("category.nature") },
     { value: "food", label: t("category.food") },
-    { value: "memorials", label: t("category.memorials") },
+    { value: "memorials", label: t("category.memorials") }, // plural
   ]
 
   return (
@@ -200,6 +238,39 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
               placeholder="Describe your trip itinerary..."
               rows={3}
             />
+          </div>
+
+          {/* Mode & Road Condition */}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Mode of Transport</Label>
+              <Select value={transportMode} onValueChange={(v) => setTransportMode(v as TransportMode)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose mode" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="car">Car</SelectItem>
+                  <SelectItem value="motorbike">Motorbike</SelectItem>
+                  <SelectItem value="bus">Bus/Minibus</SelectItem>
+                  <SelectItem value="bicycle">Bicycle</SelectItem>
+                  <SelectItem value="walking">Walking</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Road Conditions</Label>
+              <Select value={roadCondition} onValueChange={(v) => setRoadCondition(v as RoadCondition)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose condition" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sealed">Mostly sealed</SelectItem>
+                  <SelectItem value="mixed">Mixed / some rough</SelectItem>
+                  <SelectItem value="rough">Rough / mountainous</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           <div className="flex items-center space-x-2">
@@ -257,11 +328,11 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
                       <p className="text-xs text-muted-foreground mb-2 line-clamp-2">{place.description}</p>
                       <div className="flex items-center gap-2">
                         <Badge variant="secondary" className="text-xs">
-                          {t(`category.${place.category}`)}
+                          {t(safeCategoryKey(place.category))}
                         </Badge>
                         <span className="text-xs text-muted-foreground flex items-center">
                           <MapPin className="h-3 w-3 mr-1" />
-                          {place.municipality}
+                          {place.municipality ?? "Unknown"}
                         </span>
                       </div>
                     </CardContent>
@@ -299,7 +370,7 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
                     <Car className="h-4 w-4 text-muted-foreground" />
                     <div>
                       <p className="text-sm font-medium">{Math.round(tripStats.totalTime)} hours</p>
-                      <p className="text-xs text-muted-foreground">Driving Time</p>
+                      <p className="text-xs text-muted-foreground">Travel Time</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -309,6 +380,12 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
                       <p className="text-xs text-muted-foreground">Recommended Duration</p>
                     </div>
                   </div>
+                </div>
+
+                {/* Assumptions */}
+                <div className="mt-4 text-xs text-muted-foreground">
+                  Mode: <span className="font-medium capitalize">{transportMode}</span> • Roads:{" "}
+                  <span className="font-medium capitalize">{roadCondition}</span>
                 </div>
               </CardContent>
             </Card>
@@ -349,7 +426,7 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
                                         <div>
                                           <h3 className="font-medium">{tripPlace.place.title}</h3>
                                           <p className="text-sm text-muted-foreground">
-                                            {tripPlace.place.municipality} • {t(`category.${tripPlace.place.category}`)}
+                                            {tripPlace.place.municipality ?? "Unknown"} • {t(safeCategoryKey(tripPlace.place.category))}
                                           </p>
                                         </div>
                                         <div className="flex items-center gap-2">

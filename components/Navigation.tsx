@@ -33,12 +33,19 @@ export default function Navigation({language="en", onLanguageChange}: Navigation
     try{ await signOutUser() }catch(err){ console.error("Error signing out:", err) }
   }
 
+  // Helper to mark active on exact match or sub-routes (e.g., /trips and /trips/abc)
+  const isActive = (href: string) => {
+    if (href === "/") return pathname === "/"
+    return pathname === href || pathname.startsWith(href + "/")
+  }
+
   const navItems = [
     {href: "/", label: "Home", icon: Compass},
     {href: "/map", label: "Browse Map", icon: Map},
     {href: "/search", label: "Search", icon: Search},
     {href: "/near-me", label: "Near Me", icon: NavigationIcon},
     {href: "/plan-trip", label: "Plan Trip", icon: Route},
+    {href: "/trips", label: "Trips", icon: Route}, // ✅ NEW
     {href: "/submit", label: "Submit a Place", icon: Plus},
     {href: "/places", label: "Places", icon: Map},
   ]
@@ -62,7 +69,7 @@ export default function Navigation({language="en", onLanguageChange}: Navigation
                 key={item.href}
                 href={item.href}
                 className={`flex items-center gap-1 text-sm font-medium transition
-                  ${pathname===item.href ? "text-white drop-shadow" : "text-white/80 hover:text-white"}`}
+                  ${isActive(item.href) ? "text-white drop-shadow" : "text-white/80 hover:text-white"}`}
               >
                 <item.icon className="h-4 w-4" />
                 <span>{item.label}</span>
@@ -158,7 +165,7 @@ export default function Navigation({language="en", onLanguageChange}: Navigation
                   key={item.href}
                   href={item.href}
                   className={`flex items-center gap-2 px-2 py-2 text-sm font-medium rounded-md transition
-                    ${pathname===item.href ? "bg-white/20 text-white" : "text-white/90 hover:bg-white/10"}`}
+                    ${isActive(item.href) ? "bg-white/20 text-white" : "text-white/90 hover:bg-white/10"}`}
                   onClick={()=>setMobileMenuOpen(false)}
                 >
                   <item.icon className="h-4 w-4" />
