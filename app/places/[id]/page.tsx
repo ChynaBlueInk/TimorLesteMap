@@ -1,45 +1,50 @@
 // app/places/[id]/page.tsx
 "use client"
 
-import {useEffect, useState} from "react"
-import {useParams} from "next/navigation"
-import {getPlace, type Place} from "@/lib/firestore"
-import Navigation from "@/components/Navigation"
+import { useEffect, useState } from "react"
+import { useParams, useRouter } from "next/navigation"
+import { getPlace, deletePlace, type Place } from "@/lib/firestore"
 import MapView from "@/components/MapView"
 import Reviews from "@/components/Reviews"
-import {Card, CardContent} from "@/components/ui/card"
-import {Badge} from "@/components/ui/badge"
-import {Loader2, MapPin, Calendar} from "lucide-react"
+import { Card, CardContent } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { Loader2, MapPin, Calendar, Pencil, Trash2 } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import Link from "next/link"
 
-export default function PlaceDetailPage(){
+export default function PlaceDetailPage() {
   const params = useParams()
+  const router = useRouter()
   const placeId = params.id as string
 
-  const [place, setPlace] = useState<Place|null>(null)
+  const [place, setPlace] = useState<Place | null>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string|undefined>(undefined)
+  const [error, setError] = useState<string | undefined>(undefined)
 
-  useEffect(()=>{
+  useEffect(() => {
     let cancelled = false
-    const run = async ()=>{
-      setLoading(true); setError(undefined)
-      try{
+    const run = async () => {
+      setLoading(true)
+      setError(undefined)
+      try {
         const p = await getPlace(placeId)
-        if(!cancelled) setPlace(p||null)
-        if(!cancelled && !p) setError("Place not found.")
-      }catch(err:any){
-        if(!cancelled) setError(err?.message||"Failed to load place.")
-      }finally{
-        if(!cancelled) setLoading(false)
+        if (!cancelled) setPlace(p || null)
+        if (!cancelled && !p) setError("Place not found.")
+      } catch (err: any) {
+        if (!cancelled) setError(err?.message || "Failed to load place.")
+      } finally {
+        if (!cancelled) setLoading(false)
       }
     }
-    if(placeId) run()
-    return ()=>{ cancelled = true }
-  },[placeId])
+    if (placeId) run()
+    return () => {
+      cancelled = true
+    }
+  }, [placeId])
 
   return (
     <div className="min-h-screen bg-background">
-      <Navigation />
+      {/* Navigation is already in app/layout.tsx – don’t render it again here */}
 
       <div className="container mx-auto px-4 py-8">
         {loading ? (
@@ -49,30 +54,57 @@ export default function PlaceDetailPage(){
         ) : error || !place ? (
           <Card>
             <CardContent className="p-8 text-center">
-              <p className="text-muted-foreground">{error||"Place not found."}</p>
+              <p className="text-muted-foreground">{error || "Place not found."}</p>
             </CardContent>
           </Card>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 space-y-6">
-              <div>
-                <h1 className="text-3xl font-bold">{place.title}</h1>
-                <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
-                  <Badge variant="secondary">{place.category}</Badge>
-                  <span className="inline-flex items-center gap-1">
-                    <MapPin className="h-4 w-4" />
-                    {place.municipality}{place.suco?`, ${place.suco}`:""}
-                  </span>
-                  {place.period && (place.period.fromYear||place.period.toYear) && (
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h1 className="text-3xl font-bold">{place.title}</h1>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                    <Badge variant="secondary">{place.category}</Badge>
                     <span className="inline-flex items-center gap-1">
-                      <Calendar className="h-4 w-4" />
-                      {place.period.fromYear && place.period.toYear
-                        ? `${place.period.fromYear}–${place.period.toYear}`
-                        : place.period.fromYear
+                      <MapPin className="h-4 w-4" />
+                      {place.municipality}
+                      {place.suco ? `, ${place.suco}` : ""}
+                    </span>
+                    {place.period && (place.period.fromYear || place.period.toYear) && (
+                      <span className="inline-flex items-center gap-1">
+                        <Calendar className="h-4 w-4" />
+                        {place.period.fromYear && place.period.toYear
+                          ? `${place.period.fromYear}–${place.period.toYear}`
+                          : place.period.fromYear
                           ? `From ${place.period.fromYear}`
                           : `Until ${place.period.toYear}`}
-                    </span>
-                  )}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Edit / Delete actions */}
+                <div className="flex gap-2">
+                  <Button asChild variant="secondary" size="sm" className="gap-2">
+                    <Link href={`/submit?edit=${place.id}`}>
+                      <Pencil className="h-4 w-4" />
+                      Edit
+                    </Link>
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="gap-2"
+                    onClick={async () => {
+                      const ok = window.confirm(`Delete "${place.title}"? This cannot be undone.`)
+                      if (!ok) return
+                      await deletePlace(place.id)
+                      router.push("/places")
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Delete
+                  </Button>
                 </div>
               </div>
 
@@ -81,10 +113,10 @@ export default function PlaceDetailPage(){
                   <div className="h-[360px]">
                     <MapView
                       places={[place]}
-                      center={{lat: place.coords.lat, lng: place.coords.lng}}
+                      center={{ lat: place.coords.lat, lng: place.coords.lng }}
                       zoom={14}
-                      showUserLocation={false}
-                      showControls={false}
+                      attributionControl={false}
+                      zoomControl={true}
                       className="h-full"
                     />
                   </div>
@@ -105,11 +137,13 @@ export default function PlaceDetailPage(){
               <Card>
                 <CardContent className="p-6">
                   <h3 className="font-semibold mb-2">Sources</h3>
-                  {Array.isArray(place.sources)&&place.sources.length>0 ? (
+                  {Array.isArray(place.sources) && place.sources.length > 0 ? (
                     <ul className="list-disc pl-5 space-y-1 text-sm">
-                      {place.sources.map((s,idx)=>(
+                      {place.sources.map((s, idx) => (
                         <li key={idx}>
-                          <a href={s} target="_blank" rel="noreferrer" className="text-primary underline">{s}</a>
+                          <a href={s} target="_blank" rel="noreferrer" className="text-primary underline">
+                            {s}
+                          </a>
                         </li>
                       ))}
                     </ul>

@@ -14,7 +14,21 @@ interface ImageUploaderProps {
   disabled?: boolean
 }
 
-export default function ImageUploader({ images, onImagesChange, maxImages = 5, disabled = false }: ImageUploaderProps) {
+async function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = (e) => reject(e)
+    reader.readAsDataURL(file) // ✅ base64 string that survives JSON/localStorage
+  })
+}
+
+export default function ImageUploader({
+  images,
+  onImagesChange,
+  maxImages = 5,
+  disabled = false,
+}: ImageUploaderProps) {
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -23,47 +37,40 @@ export default function ImageUploader({ images, onImagesChange, maxImages = 5, d
     const files = Array.from(event.target.files || [])
     if (files.length === 0) return
 
-    const remainingSlots = maxImages - images.length
-    const filesToUpload = files.slice(0, remainingSlots)
+    const remainingSlots = Math.max(0, maxImages - images.length)
+    const filesToAdd = files.slice(0, remainingSlots)
+    if (filesToAdd.length === 0) {
+      // reset the input so the same files can be chosen again later
+      if (fileInputRef.current) fileInputRef.current.value = ""
+      return
+    }
 
     setUploading(true)
     setUploadProgress(0)
 
     try {
-      const uploadPromises = filesToUpload.map(async (file, index) => {
-        // Simulate upload delay
-        await new Promise((resolve) => setTimeout(resolve, 1000))
+      // Convert sequentially so we can show a meaningful progress bar
+      const newDataUrls: string[] = []
+      for (let i = 0; i < filesToAdd.length; i++) {
+        const dataUrl = await fileToDataUrl(filesToAdd[i])
+        newDataUrls.push(dataUrl)
+        setUploadProgress(Math.round(((i + 1) / filesToAdd.length) * 100))
+      }
 
-        // Create object URL for preview
-        const objectUrl = URL.createObjectURL(file)
-
-        setUploadProgress(((index + 1) / filesToUpload.length) * 100)
-        return objectUrl
-      })
-
-      const uploadedUrls = await Promise.all(uploadPromises)
-      onImagesChange([...images, ...uploadedUrls])
+      onImagesChange([...images, ...newDataUrls])
     } catch (error) {
-      console.error("Error uploading images:", error)
-      alert("Failed to upload images.")
+      console.error("Error reading images:", error)
+      alert("Failed to add images.")
     } finally {
       setUploading(false)
       setUploadProgress(0)
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ""
-      }
+      if (fileInputRef.current) fileInputRef.current.value = ""
     }
   }
 
   const removeImage = (index: number) => {
-    const imageToRemove = images[index]
-    // Clean up object URL if it's a blob URL
-    if (imageToRemove.startsWith("blob:")) {
-      URL.revokeObjectURL(imageToRemove)
-    }
-
-    const newImages = images.filter((_, i) => i !== index)
-    onImagesChange(newImages)
+    const next = images.filter((_, i) => i !== index)
+    onImagesChange(next)
   }
 
   const canAddMore = images.length < maxImages && !disabled
@@ -92,7 +99,7 @@ export default function ImageUploader({ images, onImagesChange, maxImages = 5, d
             {uploading ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Uploading...
+                Adding…
               </>
             ) : (
               <>
@@ -104,11 +111,13 @@ export default function ImageUploader({ images, onImagesChange, maxImages = 5, d
         </div>
       )}
 
-      {/* Upload Progress */}
+      {/* Progress */}
       {uploading && (
         <div className="space-y-2">
           <Progress value={uploadProgress} className="w-full" />
-          <p className="text-sm text-muted-foreground text-center">Uploading images... {Math.round(uploadProgress)}%</p>
+          <p className="text-sm text-muted-foreground text-center">
+            Processing images… {uploadProgress}%
+          </p>
         </div>
       )}
 

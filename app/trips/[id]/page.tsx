@@ -4,7 +4,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
-import { useAuth } from "@/hooks/useAuth"
 import {
   getTrip,
   createTrip,
@@ -23,7 +22,6 @@ import { useTranslation } from "@/lib/i18n"
 export default function TripDetailPage() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
-  const { user } = useAuth()
   const { t } = useTranslation()
 
   const [trip, setTrip] = useState<Trip | null>(null)
@@ -60,18 +58,16 @@ export default function TripDetailPage() {
     if (!trip) return
     setDuplicating(true)
     try {
-      const ownerId = user?.uid ?? "anonymous"
       const copyName = trip.name?.startsWith("Copy of ") ? trip.name : `Copy of ${trip.name}`
 
       const payload = {
         name: copyName,
         description: trip.description ?? "",
         places: trip.places, // same order & notes
-        ownerId,
-        isPublic: false, // copies start private; user can publish later
+        ownerId: "anonymous", // ✅ no auth required
+        isPublic: false, // copies start private
         transportMode: mode,
         roadCondition: roads,
-        // keep estimatedDuration if you were using it
         estimatedDuration: trip.estimatedDuration,
       } as const
 
@@ -231,6 +227,6 @@ function renderCategory(t: ReturnType<typeof useTranslation>["t"], cat: string) 
     cat === "nature" ? "category.nature" :
     cat === "food" ? "category.food" :
     cat === "memorials" ? "category.memorials" :
-    "category.nature" // fallback to a valid key
+    "category.nature"
   return t(key)
 }

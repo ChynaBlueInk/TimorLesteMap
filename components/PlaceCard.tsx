@@ -1,20 +1,26 @@
+// components/PlaceCard.tsx
 "use client"
 
-import type {Place} from "@/lib/firestore"
-import {Card, CardContent, CardFooter} from "@/components/ui/card"
-import {Badge} from "@/components/ui/badge"
-import {Button} from "@/components/ui/button"
-import {MapPin, Calendar, ExternalLink, Star} from "lucide-react"
+import type { Place } from "@/lib/firestore"
+import { Card, CardContent, CardFooter } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { MapPin, Calendar, ExternalLink, Star, Pencil, Trash2 } from "lucide-react"
 import Link from "next/link"
+import { deletePlace } from "@/lib/firestore"
 
-interface PlaceCardProps{
+interface PlaceCardProps {
   place: Place
   showActions?: boolean
-  onViewOnMap?: (place: Place)=>void
+  onViewOnMap?: (place: Place) => void
+  /** Show edit/delete management actions */
+  showManage?: boolean
+  /** Called after a successful delete so parent can refresh */
+  onDeleted?: (id: string) => void
 }
 
 // Include legacy "memorials" to satisfy any wider unions elsewhere
-const categoryPills: Record<Place["category"]|"memorials", string> = {
+const categoryPills: Record<Place["category"] | "memorials", string> = {
   history: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
   culture: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
   nature: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200",
@@ -24,7 +30,7 @@ const categoryPills: Record<Place["category"]|"memorials", string> = {
   other: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
 }
 
-export default function PlaceCard({place, showActions=true, onViewOnMap}: PlaceCardProps){
+export default function PlaceCard({ place, showActions = true, onViewOnMap, showManage = false, onDeleted }: PlaceCardProps) {
   return (
     <Card className="group overflow-hidden rounded-xl border-0 shadow-sm ring-1 ring-border transition hover:shadow-xl">
       {/* Decorative top flag gradient bar */}
@@ -51,9 +57,7 @@ export default function PlaceCard({place, showActions=true, onViewOnMap}: PlaceC
         ) : null}
 
         <div className="absolute bottom-2 left-2">
-          <Badge className={`${categoryPills[place.category]} shadow-md`}>
-            {place.category}
-          </Badge>
+          <Badge className={`${categoryPills[place.category]} shadow-md`}>{place.category}</Badge>
         </div>
       </div>
 
@@ -64,16 +68,15 @@ export default function PlaceCard({place, showActions=true, onViewOnMap}: PlaceC
           </span>
         </h3>
 
-        <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">
-          {place.description}
-        </p>
+        <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">{place.description}</p>
 
         <div className="mt-3 space-y-2">
-          {(place.municipality || place.suco) ? (
+          {place.municipality || place.suco ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <MapPin className="h-4 w-4" />
               <span>
-                {place.municipality}{place.suco ? `, ${place.suco}` : ""}
+                {place.municipality}
+                {place.suco ? `, ${place.suco}` : ""}
               </span>
             </div>
           ) : null}
@@ -85,8 +88,8 @@ export default function PlaceCard({place, showActions=true, onViewOnMap}: PlaceC
                 {place.period.fromYear && place.period.toYear
                   ? `${place.period.fromYear} - ${place.period.toYear}`
                   : place.period.fromYear
-                    ? `From ${place.period.fromYear}`
-                    : `Until ${place.period.toYear}`}
+                  ? `From ${place.period.fromYear}`
+                  : `Until ${place.period.toYear}`}
               </span>
             </div>
           ) : null}
@@ -94,7 +97,7 @@ export default function PlaceCard({place, showActions=true, onViewOnMap}: PlaceC
       </CardContent>
 
       {showActions ? (
-        <CardFooter className="flex gap-2 p-4 pt-0">
+        <CardFooter className="flex flex-wrap gap-2 p-4 pt-0">
           <Button asChild variant="outline" size="sm" className="flex-1 bg-transparent hover:bg-white/60">
             <Link href={`/places/${place.id}`}>
               <ExternalLink className="mr-2 h-4 w-4" />
@@ -106,12 +109,38 @@ export default function PlaceCard({place, showActions=true, onViewOnMap}: PlaceC
             <Button
               variant="secondary"
               size="sm"
-              onClick={()=>onViewOnMap(place)}
+              onClick={() => onViewOnMap(place)}
               className="bg-flag-gradient text-white hover:opacity-90"
+              title="View on map"
             >
               <MapPin className="h-4 w-4" />
             </Button>
           ) : null}
+
+          {showManage && (
+            <>
+              <Button asChild variant="secondary" size="sm" className="gap-2">
+                <Link href={`/submit?edit=${place.id}`}>
+                  <Pencil className="h-4 w-4" />
+                  Edit
+                </Link>
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                className="gap-2"
+                onClick={async () => {
+                  const ok = window.confirm(`Delete "${place.title}"? This cannot be undone.`);
+                  if (!ok) return;
+                  await deletePlace(place.id);
+                  onDeleted?.(place.id);
+                }}
+              >
+                <Trash2 className="h-4 w-4" />
+                Delete
+              </Button>
+            </>
+          )}
         </CardFooter>
       ) : null}
     </Card>

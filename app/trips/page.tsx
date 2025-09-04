@@ -1,36 +1,72 @@
 // app/trips/page.tsx
-"use client"
+"use client";
 
-import { useEffect, useState } from "react"
-import Link from "next/link"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { calculateTripStats, getPublicTrips, type Trip } from "@/lib/trips"
-import { Route, Car, Calendar, MapPin, PlusCircle } from "lucide-react"
+import { useEffect, useState, useCallback } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import TripCard from "@/components/TripCard";
+import {
+  getAllTrips,
+  getPublicTrips,
+  deleteTrip as removeTrip,
+  type Trip,
+} from "@/lib/trips";
+import { PlusCircle } from "lucide-react";
 
-export default function PublicTripsPage() {
-  const [trips, setTrips] = useState<Trip[]>([])
-  const [loading, setLoading] = useState(true)
+export default function TripsPage() {
+  const router = useRouter();
+  const [savedTrips, setSavedTrips] = useState<Trip[]>([]);
+  const [publicTrips, setPublicTrips] = useState<Trip[]>([]);
+  const [loadingSaved, setLoadingSaved] = useState(true);
+  const [loadingPublic, setLoadingPublic] = useState(true);
+
+  const loadSaved = useCallback(async () => {
+    setLoadingSaved(true);
+    try {
+      const mine = await getAllTrips(); // local saved trips (anonymous mode)
+      setSavedTrips(mine);
+    } finally {
+      setLoadingSaved(false);
+    }
+  }, []);
+
+  const loadPublic = useCallback(async () => {
+    setLoadingPublic(true);
+    try {
+      const pub = await getPublicTrips();
+      setPublicTrips(pub);
+    } finally {
+      setLoadingPublic(false);
+    }
+  }, []);
 
   useEffect(() => {
-    ;(async () => {
-      try {
-        const data = await getPublicTrips()
-        setTrips(data)
-      } finally {
-        setLoading(false)
-      }
-    })()
-  }, [])
+    // Load both sections
+    loadSaved();
+    loadPublic();
+  }, [loadSaved, loadPublic]);
+
+  const handleEdit = (trip: Trip) => {
+    router.push(`/plan-trip?edit=${trip.id}`);
+  };
+
+  const handleDelete = async (trip: Trip) => {
+    const ok = window.confirm(`Delete trip "${trip.name}"? This cannot be undone.`);
+    if (!ok) return;
+    await removeTrip(trip.id);
+    // Refresh both sections (in case a deleted public trip was also saved locally)
+    await Promise.all([loadSaved(), loadPublic()]);
+  };
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="mb-8 flex items-start justify-between gap-4">
+    <div className="container mx-auto px-4 py-8 space-y-10">
+      <div className="mb-2 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold mb-2">Public Trips</h1>
+          <h1 className="text-3xl font-bold mb-2">Trips</h1>
           <p className="text-muted-foreground">
-            Browse itineraries shared by the community. Open one to view details and copy it into your own planner.
+            View your saved trips, browse public itineraries, or plan a new one.
           </p>
         </div>
         <Button asChild>
@@ -41,95 +77,90 @@ export default function PublicTripsPage() {
         </Button>
       </div>
 
-      {loading ? (
-        <p className="text-muted-foreground">Loading public trips…</p>
-      ) : trips.length === 0 ? (
-        <EmptyState />
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2">
-          {trips.map((trip) => {
-            const stats = calculateTripStats(trip)
-            const mode = trip.transportMode ?? "car"
-            const roads = trip.roadCondition ?? "mixed"
-
-            return (
-              <Card key={trip.id} className="hover:shadow-sm transition">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-lg">
-                    <Link className="hover:underline" href={`/trips/${trip.id}`}>
-                      {trip.name}
-                    </Link>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {trip.description && (
-                    <p className="text-sm text-muted-foreground line-clamp-2">{trip.description}</p>
-                  )}
-
-                  {/* Stats row */}
-                  <div className="flex flex-wrap gap-4 text-sm">
-                    <span className="flex items-center gap-1">
-                      <Route className="h-4 w-4" />
-                      {Math.round(stats.totalDistance)} km
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Car className="h-4 w-4" />
-                      {Math.round(stats.totalTime)} hrs
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Calendar className="h-4 w-4" />
-                      {stats.estimatedDays} days
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <MapPin className="h-4 w-4" />
-                      {trip.places.length} stops
-                    </span>
-                  </div>
-
-                  {/* Meta badges */}
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="secondary" className="text-xs capitalize">{mode}</Badge>
-                    <Badge variant="outline" className="text-xs capitalize">{roads}</Badge>
-
-                    {/* Updated time (friendly) */}
-                    <span className="text-xs text-muted-foreground ml-auto">
-                      Updated {new Date(trip.updatedAt).toLocaleDateString()}
-                    </span>
-                  </div>
-
-                  {/* Link */}
-                  <div className="pt-2">
-                    <Button variant="outline" size="sm" asChild>
-                      <Link href={`/trips/${trip.id}`}>View trip</Link>
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            )
-          })}
+      {/* Your Saved Trips */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-semibold">Your Saved Trips</h2>
+          {savedTrips.length > 0 && (
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/plan-trip">
+                <PlusCircle className="mr-2 h-4 w-4" />
+                New Trip
+              </Link>
+            </Button>
+          )}
         </div>
-      )}
+
+        {loadingSaved ? (
+          <p className="text-muted-foreground">Loading your trips…</p>
+        ) : savedTrips.length === 0 ? (
+          <EmptySaved />
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2">
+            {savedTrips.map((trip) => (
+              <TripCard
+                key={trip.id}
+                trip={trip}
+                href={`/trips/${trip.id}`}
+                onEdit={handleEdit}
+                onDelete={handleDelete}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Public Trips */}
+      <section className="space-y-4">
+        <h2 className="text-xl font-semibold">Public Trips</h2>
+        {loadingPublic ? (
+          <p className="text-muted-foreground">Loading public trips…</p>
+        ) : publicTrips.length === 0 ? (
+          <EmptyPublic />
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2">
+            {publicTrips.map((trip) => (
+              <TripCard key={trip.id} trip={trip} href={`/trips/${trip.id}`} />
+            ))}
+          </div>
+        )}
+      </section>
     </div>
-  )
+  );
 }
 
-function EmptyState() {
+function EmptySaved() {
   return (
     <Card className="bg-muted/30">
       <CardContent className="py-8">
         <div className="max-w-xl mx-auto text-center">
-          <h2 className="text-xl font-semibold mb-2">No public trips yet</h2>
+          <h2 className="text-lg font-semibold mb-2">No trips saved yet</h2>
           <p className="text-sm text-muted-foreground mb-4">
-            Be the first to share an itinerary! Plan a trip and mark it as public so others can try it.
+            Start planning your first itinerary and it will show up here.
           </p>
           <Button asChild>
             <Link href="/plan-trip">
               <PlusCircle className="mr-2 h-4 w-4" />
-              Create your first trip
+              Plan a Trip
             </Link>
           </Button>
         </div>
       </CardContent>
     </Card>
-  )
+  );
+}
+
+function EmptyPublic() {
+  return (
+    <Card className="bg-muted/30">
+      <CardHeader className="pb-0">
+        <CardTitle className="text-lg">No public trips yet</CardTitle>
+      </CardHeader>
+      <CardContent className="py-6">
+        <p className="text-sm text-muted-foreground">
+          Be the first to share an itinerary! Make your trip public when saving.
+        </p>
+      </CardContent>
+    </Card>
+  );
 }

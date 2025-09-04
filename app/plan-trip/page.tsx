@@ -1,42 +1,37 @@
 // app/plan-trip/page.tsx
-"use client"
+"use client";
 
-import {useState} from "react"
-import {useRouter} from "next/navigation"
-import {useTranslation, type Language} from "@/lib/i18n"
-import Navigation from "@/components/Navigation"
-import TripPlanner from "@/components/TripPlanner"
-import type {Trip} from "@/lib/trips"
+import { useEffect, useState } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
+import TripPlanner from "@/components/TripPlanner";
+import { getTrip, type Trip } from "@/lib/trips";
 
-export default function PlanTripPage(){
-  const [language, setLanguage] = useState<Language>("en")
-  // keep hook so the language switcher still works elsewhere
-  useTranslation(language)
-  const router = useRouter()
+export default function PlanTripPage() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const editId = params.get("edit");
+  const [trip, setTrip] = useState<Trip | null>(null);
+  const [loading, setLoading] = useState<boolean>(!!editId);
 
-  const handleTripSaved = (trip: Trip)=>{
-    router.push(`/trips/${trip.id}`)
-  }
+  useEffect(() => {
+    if (!editId) return;
+    (async () => {
+      setLoading(true);
+      const t = await getTrip(editId);
+      setTrip(t);
+      setLoading(false);
+    })();
+  }, [editId]);
 
-  const handleCancel = ()=>{
-    router.push("/")
-  }
+  if (loading) return <p className="p-6 text-muted-foreground">Loading trip…</p>;
 
   return (
-    <div className="min-h-screen bg-background">
-
-      <div className="container mx-auto px-4 py-8">
-        <div className="max-w-4xl mx-auto">
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold mb-2">Plan Your Trip</h1>
-            <p className="text-muted-foreground">
-              Create a personalized itinerary to explore the best places in Timor-Leste
-            </p>
-          </div>
-
-          <TripPlanner language={language} onSave={handleTripSaved} onCancel={handleCancel} />
-        </div>
-      </div>
+    <div className="container mx-auto px-4 py-6">
+      <TripPlanner
+        trip={trip ?? undefined}
+        onSave={() => router.push("/trips")}
+        onCancel={() => router.push("/trips")}
+      />
     </div>
-  )
+  );
 }

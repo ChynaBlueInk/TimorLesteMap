@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo } from "react"
-import { getPlaces, type Place } from "@/lib/firestore"
+import { getPlaces, deletePlace, type Place } from "@/lib/firestore"
 import { calculateDistance } from "@/lib/trips"
 import { useGeolocation } from "@/hooks/useGeolocation"
 import { useTranslation, type Language } from "@/lib/i18n"
@@ -12,7 +12,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import MapView from "./MapView"
-import { MapPin, Navigation, AlertCircle, Loader2, Filter, Map, List } from "lucide-react"
+import { MapPin, Navigation, AlertCircle, Loader2, Filter, Map, List, Pencil, Trash2, ExternalLink } from "lucide-react"
 import Link from "next/link"
 
 interface NearbyPlace extends Place {
@@ -22,6 +22,33 @@ interface NearbyPlace extends Place {
 interface NearbyPlacesProps {
   language?: Language
 }
+
+// Map possibly-inconsistent category values to known i18n keys
+const categoryKeyMap: Record<
+  string,
+  | "category.history"
+  | "category.culture"
+  | "category.nature"
+  | "category.food"
+  | "category.memorials"
+> = {
+  history: "category.history",
+  culture: "category.culture",
+  nature: "category.nature",
+  food: "category.food",
+  memorials: "category.memorials",
+  memorial: "category.memorials", // alias → existing key
+  other: "category.culture", // fallback
+}
+
+const safeCategoryKey = (
+  cat: string
+):
+  | "category.history"
+  | "category.culture"
+  | "category.nature"
+  | "category.food"
+  | "category.memorials" => categoryKeyMap[cat] ?? "category.nature"
 
 export default function NearbyPlaces({ language = "en" }: NearbyPlacesProps) {
   const { t } = useTranslation(language)
@@ -35,6 +62,7 @@ export default function NearbyPlaces({ language = "en" }: NearbyPlacesProps) {
 
   useEffect(() => {
     loadPlaces()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const loadPlaces = async () => {
@@ -245,20 +273,51 @@ export default function NearbyPlaces({ language = "en" }: NearbyPlacesProps) {
                                 <p className="text-sm text-muted-foreground mb-2">{place.municipality}</p>
                                 <p className="text-sm line-clamp-2 mb-3">{place.description}</p>
                                 <div className="flex items-center gap-2">
-                                  <Badge variant="secondary">{t(`category.${place.category}`)}</Badge>
+                                  <Badge variant="secondary">{t(safeCategoryKey(place.category))}</Badge>
                                   <div className="flex items-center gap-1 text-sm text-muted-foreground">
                                     <Navigation className="h-3 w-3" />
                                     <span>{place.distance.toFixed(1)} km away</span>
                                   </div>
                                 </div>
+
+                                {/* Row of actions: View, Edit, Delete */}
+                                <div className="mt-3 flex gap-2">
+                                  <Button asChild variant="outline" size="sm" className="gap-2">
+                                    <Link href={`/places/${place.id}`}>
+                                      <ExternalLink className="h-4 w-4" />
+                                      View
+                                    </Link>
+                                  </Button>
+                                  <Button asChild variant="secondary" size="sm" className="gap-2">
+                                    <Link href={`/submit?edit=${place.id}`}>
+                                      <Pencil className="h-4 w-4" />
+                                      Edit
+                                    </Link>
+                                  </Button>
+                                  <Button
+                                    variant="destructive"
+                                    size="sm"
+                                    className="gap-2"
+                                    onClick={async () => {
+                                      const ok = window.confirm(`Delete "${place.title}"? This cannot be undone.`);
+                                      if (!ok) return;
+                                      await deletePlace(place.id!);
+                                      await loadPlaces();
+                                    }}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                    Delete
+                                  </Button>
+                                </div>
                               </div>
-                              {place.images.length > 0 && (
+
+                              {place.images?.length ? (
                                 <img
-                                  src={place.images[0] || "/placeholder.svg"}
+                                  src={place.images[0] ?? "/placeholder.svg"}
                                   alt={place.title}
                                   className="w-20 h-20 object-cover rounded-md ml-4"
                                 />
-                              )}
+                              ) : null}
                             </div>
                           </CardContent>
                         </Card>
@@ -272,8 +331,12 @@ export default function NearbyPlaces({ language = "en" }: NearbyPlacesProps) {
                         places={nearbyPlaces}
                         center={coords}
                         zoom={10}
-                        showUserLocation={true}
-                        language={language}
+                        onDelete={async (place) => {
+                          const ok = window.confirm(`Delete "${place.title}"? This cannot be undone.`);
+                          if (!ok) return;
+                          await deletePlace(place.id!);
+                          await loadPlaces();
+                        }}
                       />
                     </div>
                   </TabsContent>

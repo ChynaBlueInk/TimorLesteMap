@@ -28,7 +28,7 @@ interface PlaceFormProps {
 }
 
 export default function PlaceForm({ place, language = "en", onCancel }: PlaceFormProps) {
-  const { user, userProfile } = useAuth()
+  const { user } = useAuth()
   const router = useRouter()
   const { t } = useTranslation(language)
 
@@ -37,11 +37,11 @@ export default function PlaceForm({ place, language = "en", onCancel }: PlaceFor
     description: place?.description || "",
     category: place?.category || ("history" as const),
     municipality: place?.municipality || "",
-    suco: place?.suco || "", // ← optional now
+    suco: place?.suco || "",
     coords: place?.coords || { lat: 0, lng: 0 },
     images: place?.images || [],
     sources: place?.sources || [],
-    languages: place?.languages || ([] as ("tet" | "en" | "pt")[]), // ← optional now (was ["en"])
+    languages: place?.languages || ([] as ("tet" | "en" | "pt")[]),
     period: place?.period || { fromYear: undefined, toYear: undefined },
   })
 
@@ -80,12 +80,13 @@ export default function PlaceForm({ place, language = "en", onCancel }: PlaceFor
       setErrors({})
       return true
     } catch (error: any) {
-      const remaining = (error?.errors as Array<{ path: (string | number)[]; message: string }> | undefined)?.filter(
-        (err) => {
-          const root = String(err.path?.[0] ?? "")
-          return root !== "languages" && root !== "suco"
-        }
-      ) ?? []
+      const remaining =
+        (error?.errors as Array<{ path: (string | number)[]; message: string }> | undefined)?.filter(
+          (err) => {
+            const root = String(err.path?.[0] ?? "")
+            return root !== "languages" && root !== "suco"
+          }
+        ) ?? []
 
       if (remaining.length === 0) {
         setErrors({})
@@ -104,21 +105,17 @@ export default function PlaceForm({ place, language = "en", onCancel }: PlaceFor
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    if (!user) {
-      setErrors({ general: "You must be signed in to submit a place" })
-      return
-    }
-
+    // ✅ Allow anonymous submissions
+    // (no early return if not signed in)
     if (!validateForm()) return
 
     setLoading(true)
     try {
       const placeData = {
         ...formData,
-        ownerId: user.uid,
-        status: "published" as const, // ← auto-publish (no review)
+        ownerId: user?.uid ?? "anonymous",
+        status: "published" as const, // auto-publish
         featured: place?.featured || false,
-        // you can also add a `reviewed: true` flag here if your UI expects it
       }
 
       if (place?.id) {
@@ -209,7 +206,7 @@ export default function PlaceForm({ place, language = "en", onCancel }: PlaceFor
             </div>
 
             <div className="space-y-2">
-              <Label>Languages</Label> {/* ← no asterisk; optional */}
+              <Label>Languages</Label>
               <div className="flex flex-wrap gap-4">
                 {languages.map((lang) => (
                   <div key={lang.code} className="flex items-center space-x-2">
@@ -224,7 +221,7 @@ export default function PlaceForm({ place, language = "en", onCancel }: PlaceFor
                   </div>
                 ))}
               </div>
-              {/* no languages error shown (optional) */}
+              {/* optional; no error */}
             </div>
           </div>
         </CardContent>
@@ -250,7 +247,7 @@ export default function PlaceForm({ place, language = "en", onCancel }: PlaceFor
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="suco">{t("form.suco")}</Label> {/* ← no asterisk; optional */}
+              <Label htmlFor="suco">{t("form.suco")}</Label>
               <Input
                 id="suco"
                 value={formData.suco}
@@ -258,7 +255,7 @@ export default function PlaceForm({ place, language = "en", onCancel }: PlaceFor
                 placeholder="Enter suco/village name"
                 className={errors.suco ? "border-destructive" : ""}
               />
-              {/* no suco error shown (optional) */}
+              {/* optional; no error */}
             </div>
           </div>
 
@@ -372,7 +369,6 @@ export default function PlaceForm({ place, language = "en", onCancel }: PlaceFor
         )}
       </div>
 
-      {/* Note: removed the "review before publishing" bullet */}
       {!place && (
         <div className="text-sm text-muted-foreground bg-muted p-4 rounded-lg">
           <p className="font-medium mb-2">Before you submit:</p>
