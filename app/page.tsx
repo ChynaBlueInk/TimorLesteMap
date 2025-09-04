@@ -74,7 +74,7 @@ export default function HomePage(){
           {/* CTA Buttons */}
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Button asChild size="lg" className="h-12 px-8">
-              <Link href="/map">
+              <Link href="/places">
                 <Map className="h-5 w-5 mr-2" />
                 {t("home.browseMap")}
               </Link>
@@ -95,8 +95,7 @@ export default function HomePage(){
           <div className="flex items-center justify-between mb-8">
             <h2 className="text-3xl font-bold">{t("home.featuredPlaces")}</h2>
             <Button asChild variant="ghost">
-              <Link href="/map?featured=true">
-                {t("action.viewAll")}
+<Link href="/places?featured=true">                {t("action.viewAll")}
                 <ArrowRight className="h-4 w-4 ml-2" />
               </Link>
             </Button>
