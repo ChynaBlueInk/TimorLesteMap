@@ -201,3 +201,7 @@ export const PLACES: Place[] = [
   ...POPULAR_LOCATIONS,
   ...PROTECTED_AREAS,
 ];
+
+
+
+
