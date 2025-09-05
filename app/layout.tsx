@@ -23,7 +23,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" suppressHydrationWarning>
       <body className={`font-sans ${GeistSans.variable} ${GeistMono.variable}`}>
         {/* Nav renders only in the browser, avoiding `window` access on the server */}
-        <Navigation />
         <Suspense fallback={null}>{children}</Suspense>
         <Analytics />
       </body>
