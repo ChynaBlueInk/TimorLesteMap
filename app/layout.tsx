@@ -8,7 +8,7 @@ import { Suspense } from "react";
 import dynamic from "next/dynamic";
 import "./globals.css";
 
-// ⬇️ Client-only Navigation (prevents Radix from running on the server)
+// ⬇️ Client-only Navigation (prevents client hooks from running on the server)
 const Navigation = dynamic(() => import("@/components/Navigation"), { ssr: false });
 
 export const metadata: Metadata = {
@@ -22,8 +22,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`font-sans ${GeistSans.variable} ${GeistMono.variable}`}>
-        {/* Nav renders only in the browser, avoiding `window` access on the server */}
+        {/* Render global nav (client-only) */}
+        <Suspense fallback={null}>
+          <Navigation />
+        </Suspense>
+
+        {/* Page content */}
         <Suspense fallback={null}>{children}</Suspense>
+
         <Analytics />
       </body>
     </html>

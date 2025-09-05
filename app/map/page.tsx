@@ -1,8 +1,7 @@
 // app/map/page.tsx
-// NOTE: This file is a **Server Component**. Do not add "use client" here.
-
+// Server Component wrapper
 export const dynamic = "force-dynamic";
-// export const revalidate = 0; // ← removed to avoid object-merge issue
+export const revalidate = 0;
 export const fetchCache = "force-no-store";
 
 import MapClient from "./MapClient";

@@ -95,7 +95,8 @@ export default function HomePage(){
           <div className="flex items-center justify-between mb-8">
             <h2 className="text-3xl font-bold">{t("home.featuredPlaces")}</h2>
             <Button asChild variant="ghost">
-<Link href="/places?featured=true">                {t("action.viewAll")}
+<Link href="/places?featured=true">
+                {t("action.viewAll")}
                 <ArrowRight className="h-4 w-4 ml-2" />
               </Link>
             </Button>
