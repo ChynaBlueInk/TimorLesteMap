@@ -1,6 +1,6 @@
 // lib/firestore.ts
-// LocalStorage-backed data layer (no Firebase) for dev/demo.
-// Safe on SSR: all storage ops are gated behind typeof window checks.
+// Hybrid storage: localStorage for dev; S3 via API routes for prod.
+// Flip with NEXT_PUBLIC_STORAGE=s3
 
 export type Place = {
   id: string
@@ -10,7 +10,7 @@ export type Place = {
   municipality?: string
   suco?: string
   coords: { lat: number; lng: number }
-  images?: string[] // may also hold blob/data URLs in practice
+  images?: string[]
   sources?: string[]
   languages?: string[]
   createdAt: number
@@ -49,10 +49,11 @@ export type Review = {
   createdAt: number
 }
 
-// Optional filters for getPlaces (expand as needed)
 export type GetPlacesFilter = {
   status?: "published" | "pending" | "flagged"
 }
+
+const USE_S3 = process.env.NEXT_PUBLIC_STORAGE === "s3"
 
 const PLACES_KEY = "tl_places_v1"
 const PROFILE_KEY = "tl_user_profile_v1"
@@ -77,7 +78,7 @@ const writeJSON = <T,>(key: string, value: T): void => {
   try {
     localStorage.setItem(key, JSON.stringify(value))
   } catch {
-    // swallow write errors (e.g., quota)
+    // ignore quota errors
   }
 }
 
@@ -265,36 +266,84 @@ export const SEED_PLACES: Place[] = [
   },
 ]
 
-// ---------- Places API ----------
-export const getPlaces = async (filter?: GetPlacesFilter): Promise<Place[]> => {
-  const all = readJSON<Place[]>(PLACES_KEY, SEED_PLACES)
-
-  if (!filter) return all
-
-  let results = all
-  if (filter.status) {
-    // default legacy assumption: missing status = "published"
-    results = results.filter((p) => (p.status ?? "published") === filter.status)
+/** Ensure seeds exist and migrate legacy categories. */
+const ensureSeeded = (): Place[] => {
+  const raw = readJSON<unknown>(PLACES_KEY, undefined as unknown as unknown)
+  if (!Array.isArray(raw) || raw.length === 0) {
+    writeJSON(PLACES_KEY, SEED_PLACES)
+    return [...SEED_PLACES]
   }
-  return results
+  const arr = raw as Place[]
+  const valid = ["history", "culture", "nature", "food", "memorial", "memorials", "other"] as const
+  const migrated = arr.map((p) => {
+    let c = p.category === "memorial" ? "memorials" : p.category
+    if (!valid.includes(c as any)) c = "other"
+    return { ...p, category: c as Place["category"] }
+  })
+  if (JSON.stringify(migrated) !== JSON.stringify(arr)) writeJSON(PLACES_KEY, migrated)
+  return migrated
+}
+
+export const resetPlacesToSeed = (): void => {
+  writeJSON(PLACES_KEY, SEED_PLACES)
+}
+
+// ============ PLACES (Hybrid) ============
+export const getPlaces = async (filter?: GetPlacesFilter): Promise<Place[]> => {
+  if (USE_S3) {
+    const res = await fetch("/api/places", { cache: "no-store" })
+    if (!res.ok) throw new Error("Failed to fetch places")
+    let all = (await res.json()) as Place[]
+    if (filter?.status) {
+      all = all.filter((p) => (p.status ?? "published") === filter.status)
+    }
+    return all
+  }
+  const all = ensureSeeded()
+  if (!filter) return all
+  return filter.status ? all.filter((p) => (p.status ?? "published") === filter.status) : all
 }
 
 export const getPlace = async (id: string): Promise<Place | undefined> => {
-  const all = await getPlaces()
-  return all.find((p) => p.id === id)
+  if (USE_S3) {
+    const res = await fetch(`/api/places/${id}`, { cache: "no-store" })
+    if (!res.ok) return undefined
+    return (await res.json()) as Place
+  }
+  return ensureSeeded().find((p) => p.id === id)
 }
 
-export const createPlace = async (data: Omit<Place, "id" | "createdAt" | "updatedAt">): Promise<Place> => {
+export const createPlace = async (
+  data: Omit<Place, "id" | "createdAt" | "updatedAt">
+): Promise<Place> => {
+  if (USE_S3) {
+    const res = await fetch(`/api/places`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    })
+    if (!res.ok) throw new Error("Failed to create place")
+    return (await res.json()) as Place
+  }
   const now = Date.now()
   const place: Place = { ...data, id: cryptoRandomId(), createdAt: now, updatedAt: now }
-  const all = readJSON<Place[]>(PLACES_KEY, SEED_PLACES)
+  const all = ensureSeeded()
   all.push(place)
   writeJSON(PLACES_KEY, all)
   return place
 }
 
 export const updatePlace = async (id: string, patch: Partial<Place>): Promise<Place | undefined> => {
-  const all = readJSON<Place[]>(PLACES_KEY, SEED_PLACES)
+  if (USE_S3) {
+    const res = await fetch(`/api/places/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    })
+    if (!res.ok) throw new Error("Failed to update place")
+    return (await res.json()) as Place
+  }
+  const all = ensureSeeded()
   const idx = all.findIndex((p) => p.id === id)
   if (idx === -1) return undefined
   all[idx] = { ...all[idx], ...patch, updatedAt: Date.now() }
@@ -302,14 +351,19 @@ export const updatePlace = async (id: string, patch: Partial<Place>): Promise<Pl
   return all[idx]
 }
 
-/** Permanently removes a place by id. Returns true if something was deleted. */
 export const deletePlace = async (id: string): Promise<boolean> => {
-  const before = readJSON<Place[]>(PLACES_KEY, SEED_PLACES)
+  if (USE_S3) {
+    const res = await fetch(`/api/places/${id}`, { method: "DELETE" })
+    if (!res.ok) throw new Error("Failed to delete place")
+    return true
+  }
+  const before = ensureSeeded()
   const after = before.filter((p) => p.id !== id)
   writeJSON(PLACES_KEY, after)
   return after.length !== before.length
 }
 
+// Search & Nearby work on whatever getPlaces() returns
 export const searchPlaces = async (q: string): Promise<Place[]> => {
   const term = (q || "").trim().toLowerCase()
   const all = await getPlaces()
@@ -324,7 +378,6 @@ export const searchPlaces = async (q: string): Promise<Place[]> => {
   })
 }
 
-// great-circle distance filter (km)
 export const getNearby = async (lat: number, lng: number, radiusKm: number): Promise<Place[]> => {
   const R = 6371
   const toRad = (d: number) => (d * Math.PI) / 180
@@ -339,7 +392,7 @@ export const getNearby = async (lat: number, lng: number, radiusKm: number): Pro
   })
 }
 
-// ---------- User Profile stubs ----------
+// ---------- User Profile (local only for MVP) ----------
 export const getUserProfile = async (uid: string): Promise<UserProfile | undefined> => {
   const profile = readJSON<UserProfile | undefined>(PROFILE_KEY, undefined as unknown as UserProfile | undefined)
   return profile && profile.uid === uid ? profile : undefined
@@ -355,17 +408,11 @@ export const upsertUserProfile = async (profile: Omit<UserProfile, "createdAt" |
   return merged
 }
 
-// ---------- Reports & Admin ----------
-const readReports = (): Report[] => {
-  return readJSON<Report[]>(REPORTS_KEY, [])
-}
-const writeReports = (reports: Report[]) => {
-  writeJSON(REPORTS_KEY, reports)
-}
+// ---------- Reports & Admin (local, simple) ----------
+const readReports = (): Report[] => readJSON<Report[]>(REPORTS_KEY, [])
+const writeReports = (reports: Report[]) => writeJSON(REPORTS_KEY, reports)
 
-export const getReports = async (): Promise<Report[]> => {
-  return readReports()
-}
+export const getReports = async (): Promise<Report[]> => readReports()
 
 export const addReport = async (data: Omit<Report, "id" | "createdAt" | "status">): Promise<Report> => {
   const now = Date.now()
@@ -394,26 +441,19 @@ export const getPlaceStats = async (): Promise<{
 }> => {
   const places = await getPlaces()
   const total = places.length
-  const published = places.filter((p) => p.status === "published").length
+  const published = places.filter((p) => (p.status ?? "published") === "published").length
   const pending = places.filter((p) => p.status === "pending").length
   const flagged = places.filter((p) => p.status === "flagged").length
   const featured = places.filter((p) => p.featured === true).length
   return { total, published, pending, flagged, featured }
 }
 
-// ---------- Reviews ----------
-const readReviews = (): Review[] => {
-  return readJSON<Review[]>(REVIEWS_KEY, [])
-}
-const writeReviews = (reviews: Review[]) => {
-  writeJSON(REVIEWS_KEY, reviews)
-}
+// ---------- Reviews (local, simple) ----------
+const readReviews = (): Review[] => readJSON<Review[]>(REVIEWS_KEY, [])
+const writeReviews = (reviews: Review[]) => writeJSON(REVIEWS_KEY, reviews)
 
-export const getReviews = async (placeId: string): Promise<Review[]> => {
-  return readReviews()
-    .filter((r) => r.placeId === placeId)
-    .sort((a, b) => b.createdAt - a.createdAt)
-}
+export const getReviews = async (placeId: string): Promise<Review[]> =>
+  readReviews().filter((r) => r.placeId === placeId).sort((a, b) => b.createdAt - a.createdAt)
 
 export const addReview = async (data: Omit<Review, "id" | "createdAt">): Promise<Review> => {
   const now = Date.now()
@@ -433,7 +473,7 @@ export const getPlaceRatingSummary = async (
   return { count, average }
 }
 
-// Add this helper to support AdminReportCard
+// kept for completeness
 export const updateReport = async (id: string, patch: Partial<Report>): Promise<Report | undefined> => {
   const all = readJSON<Report[]>(REPORTS_KEY, [])
   const idx = all.findIndex((r) => r.id === id)
