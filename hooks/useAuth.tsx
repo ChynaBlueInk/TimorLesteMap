@@ -4,18 +4,16 @@
 import { useState } from "react";
 import type { UserProfile } from "@/lib/firestore";
 
-// Minimal "no-auth" user type for MVP
-type AuthUser = { uid: string; displayName?: string | null; photoURL?: string | null } | null;
+// Minimal "no-auth" user for MVP — includes `email` so profile page compiles
+type AuthUser =
+  | {
+      uid: string;
+      displayName?: string | null;
+      email?: string | null;
+      photoURL?: string | null;
+    }
+  | null;
 
-/**
- * MVP stub: no Firebase, no real auth.
- * - user: always null
- * - isAdmin: false
- * - signIn/signOut: no-ops
- *
- * This keeps the app compiling while we focus on Places/Map/Submit.
- * Later, swap this hook for a real auth implementation.
- */
 export function useAuth() {
   const [user, setUser] = useState<AuthUser>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
