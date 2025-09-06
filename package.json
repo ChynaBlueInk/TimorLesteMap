@@ -10,6 +10,8 @@
     "start": "next start"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.883.0",
+    "@aws-sdk/s3-presigned-post": "^3.883.0",
     "@hello-pangea/dnd": "latest",
     "@hookform/resolvers": "3.10.0",
     "@radix-ui/react-accordion": "1.2.2",

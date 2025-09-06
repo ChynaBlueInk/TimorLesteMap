@@ -1,231 +1,167 @@
+// components/AdminReportCard.tsx
 "use client";
 
-import { useState } from "react";
-import { type Place, updatePlace } from "@/lib/firestore";
-import { useTranslation, type Language } from "@/lib/i18n";
+import { useEffect, useState } from "react";
+import type { Place, Report } from "@/lib/firestore";
+import { getPlace, resolveReport, updateReport } from "@/lib/firestore";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Check, X, Star, StarOff, Eye, MapPin, Calendar, Loader2, Flag } from "lucide-react";
+import { Loader2, Flag, Check, X, Eye } from "lucide-react";
 import Link from "next/link";
 
-interface AdminPlaceCardProps {
-  place: Place;
-  onUpdate: (place: Place) => void;
-  language?: Language;
+interface AdminReportCardProps {
+  report: Report;
+  /** Called after the report status changes (e.g., resolved) so the parent can refresh */
+  onStatusChange?: (reportId: string, next: Report) => void;
 }
 
-export default function AdminPlaceCard({ place, onUpdate, language = "en" }: AdminPlaceCardProps) {
-  const { t } = useTranslation(language);
-  const [loading, setLoading] = useState(false);
-  const [actionDialogOpen, setActionDialogOpen] = useState(false);
-  const [actionType, setActionType] = useState<"approve" | "reject" | "feature" | "unfeature" | null>(null);
+export default function AdminReportCard({ report, onStatusChange }: AdminReportCardProps) {
+  const [place, setPlace] = useState<Place | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [updating, setUpdating] = useState(false);
 
-  const handleAction = async () => {
-    if (!actionType) return;
-
-    setLoading(true);
-    try {
-      let updates: Partial<Place> = {};
-
-      switch (actionType) {
-        case "approve":
-          updates = { status: "published" };
-          break;
-        case "reject":
-          updates = { status: "flagged" };
-          break;
-        case "feature":
-          updates = { featured: true };
-          break;
-        case "unfeature":
-          updates = { featured: false };
-          break;
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const p = await getPlace(report.placeId);
+        if (!cancelled) setPlace(p ?? null); // ✅ coerce undefined → null
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-
-      await updatePlace(place.id!, updates);
-      onUpdate({ ...place, ...updates });
-      setActionDialogOpen(false);
-      setActionType(null);
-    } catch (error) {
-      console.error("Error updating place:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const openActionDialog = (type: typeof actionType) => {
-    setActionType(type);
-    setActionDialogOpen(true);
-  };
-
-  const getActionText = () => {
-    switch (actionType) {
-      case "approve":
-        return { title: "Approve Place", description: "This will publish the place and make it visible to all users." };
-      case "reject":
-        return { title: "Reject Place", description: "This will flag the place and hide it from public view." };
-      case "feature":
-        return {
-          title: "Feature Place",
-          description: "This will mark the place as featured and highlight it on the homepage.",
-        };
-      case "unfeature":
-        return { title: "Unfeature Place", description: "This will remove the featured status from this place." };
-      default:
-        return { title: "", description: "" };
-    }
-  };
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [report.placeId]);
 
   const statusColors = {
-    published: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
-    pending: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
-    flagged: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
+    open: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
+    pending: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
+    resolved: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
   } as const;
-  const statusKey = (place.status ?? "published") as keyof typeof statusColors;
-  const statusI18nKey = `status.${statusKey}` as any;
 
-  const categoryColors = {
-    history: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
-    culture: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
-    nature: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200",
-    food: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
-    memorials: "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200",
-    other: "bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-200",
-  } as const;
-  const categoryKey = (place.category === "memorial" ? "memorials" : place.category) as keyof typeof categoryColors;
-  const categoryI18nKey = `category.${categoryKey}` as any;
+  async function markResolved() {
+    setUpdating(true);
+    try {
+      // keep both helpers so either implementation works
+      await resolveReport(report.id);
+      const next: Report = { ...report, status: "resolved" };
+      await updateReport(report.id, { status: "resolved" });
+      onStatusChange?.(report.id, next);
+    } catch (e) {
+      console.error("Failed to resolve report:", e);
+    } finally {
+      setUpdating(false);
+    }
+  }
 
   return (
-    <>
-      <Card className="group">
-        {place.images && place.images.length > 0 && (
-          <div className="relative h-48 overflow-hidden rounded-t-lg">
-            <img
-              src={place.images[0] || "/placeholder.svg"}
-              alt={place.title}
-              className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
-            />
-            <div className="absolute left-2 top-2 flex gap-2">
-              <Badge className={statusColors[statusKey]}>{t(statusI18nKey)}</Badge>
-              {place.featured && (
-                <Badge variant="secondary" className="bg-yellow-100 text-yellow-800">
-                  <Star className="mr-1 h-3 w-3" />
-                  Featured
-                </Badge>
-              )}
+    <Card className="group">
+      <CardContent className="p-4">
+        <div className="mb-2 flex items-start justify-between">
+          <div className="flex items-center gap-2">
+            <Flag className="h-4 w-4 text-red-600" />
+            <h3 className="text-lg font-semibold leading-tight">Report</h3>
+          </div>
+          <Badge className={statusColors[report.status]}>{report.status}</Badge>
+        </div>
+
+        <div className="space-y-2 text-sm">
+          <div>
+            <span className="font-medium">Reason:</span> {report.reason}
+          </div>
+          {report.details ? (
+            <div>
+              <span className="font-medium">Details:</span> {report.details}
             </div>
+          ) : null}
+          <div>
+            <span className="font-medium">Place ID:</span> {report.placeId}
+          </div>
+          <div className="text-muted-foreground">
+            Created: {new Date(report.createdAt).toLocaleString()}
+          </div>
+        </div>
+
+        <div className="mt-4">
+          {loading ? (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading place…
+            </div>
+          ) : place ? (
+            <div className="rounded-md border p-3">
+              <div className="mb-1 text-sm text-muted-foreground">Reported place</div>
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div className="font-medium">{place.title}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {place.municipality}
+                    {place.suco ? `, ${place.suco}` : ""}
+                  </div>
+                </div>
+                <Button asChild size="sm" variant="outline">
+                  <Link href={`/places/${place.id}`}>
+                    <Eye className="mr-2 h-4 w-4" />
+                    View
+                  </Link>
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-md border p-3 text-sm text-muted-foreground">
+              Place not found (it may have been deleted).
+            </div>
+          )}
+        </div>
+      </CardContent>
+
+      <CardFooter className="flex flex-wrap gap-2 p-4 pt-0">
+        {report.status !== "resolved" ? (
+          <>
+            <Button size="sm" onClick={markResolved} disabled={updating}>
+              {updating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}
+              Mark Resolved
+            </Button>
+            <Button size="sm" variant="outline" asChild disabled={!place}>
+              <Link href={place ? `/places/${place.id}` : "#"}>
+                <Eye className="mr-2 h-4 w-4" />
+                View Place
+              </Link>
+            </Button>
+          </>
+        ) : (
+          <div className="text-sm text-green-700 dark:text-green-300 flex items-center gap-2">
+            <Check className="h-4 w-4" />
+            Resolved
           </div>
         )}
 
-        <CardContent className="p-4">
-          <div className="mb-2 flex items-start justify-between">
-            <h3 className="text-lg font-semibold leading-tight transition-colors group-hover:text-primary">
-              {place.title}
-            </h3>
-            <Badge className={categoryColors[categoryKey]}>{t(categoryI18nKey)}</Badge>
-          </div>
-
-          <p className="mb-3 line-clamp-2 text-sm text-muted-foreground">{place.description}</p>
-
-          <div className="space-y-2">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <MapPin className="h-4 w-4" />
-              <span>
-                {place.municipality}, {place.suco}
-              </span>
-            </div>
-
-            {place.period && (place.period.fromYear || place.period.toYear) && (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Calendar className="h-4 w-4" />
-                <span>
-                  {place.period.fromYear && place.period.toYear
-                    ? `${place.period.fromYear} - ${place.period.toYear}`
-                    : place.period.fromYear
-                    ? `From ${place.period.fromYear}`
-                    : `Until ${place.period.toYear}`}
-                </span>
-              </div>
-            )}
-          </div>
-        </CardContent>
-
-        <CardFooter className="flex flex-wrap gap-2 p-4 pt-0">
-          <Button asChild variant="outline" size="sm">
-            <Link href={`/places/${place.id}`}>
-              <Eye className="mr-2 h-4 w-4" />
-              View
-            </Link>
+        {/* Optional: mark pending */}
+        {report.status === "open" && (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={async () => {
+              setUpdating(true);
+              try {
+                const next: Report = { ...report, status: "pending" };
+                await updateReport(report.id, { status: "pending" });
+                onStatusChange?.(report.id, next);
+              } finally {
+                setUpdating(false);
+              }
+            }}
+            disabled={updating}
+          >
+            {updating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <X className="mr-2 h-4 w-4" />}
+            Mark Pending
           </Button>
-
-          {place.status === "pending" && (
-            <>
-              <Button size="sm" onClick={() => openActionDialog("approve")} disabled={loading}>
-                <Check className="mr-2 h-4 w-4" />
-                Approve
-              </Button>
-              <Button variant="destructive" size="sm" onClick={() => openActionDialog("reject")} disabled={loading}>
-                <X className="mr-2 h-4 w-4" />
-                Reject
-              </Button>
-            </>
-          )}
-
-          {place.status === "published" && (
-            <>
-              {place.featured ? (
-                <Button variant="outline" size="sm" onClick={() => openActionDialog("unfeature")} disabled={loading}>
-                  <StarOff className="mr-2 h-4 w-4" />
-                  Unfeature
-                </Button>
-              ) : (
-                <Button variant="outline" size="sm" onClick={() => openActionDialog("feature")} disabled={loading}>
-                  <Star className="mr-2 h-4 w-4" />
-                  Feature
-                </Button>
-              )}
-              <Button variant="destructive" size="sm" onClick={() => openActionDialog("reject")} disabled={loading}>
-                <Flag className="mr-2 h-4 w-4" />
-                Flag
-              </Button>
-            </>
-          )}
-
-          {place.status === "flagged" && (
-            <Button size="sm" onClick={() => openActionDialog("approve")} disabled={loading}>
-              <Check className="mr-2 h-4 w-4" />
-              Restore
-            </Button>
-          )}
-        </CardFooter>
-      </Card>
-
-      <AlertDialog open={actionDialogOpen} onOpenChange={setActionDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{getActionText().title}</AlertDialogTitle>
-            <AlertDialogDescription>{getActionText().description}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleAction} disabled={loading}>
-              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Confirm
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
+        )}
+      </CardFooter>
+    </Card>
   );
 }
