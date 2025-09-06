@@ -34,6 +34,8 @@ type Props = {
   /** Optional map center. If omitted, we use the first place or a Dili fallback. */
   center?: LatLngLiteral;
   zoom?: number;
+  /** Called when user clicks a marker */
+  onPlaceClick?: (place: Place) => void; // ✅ added
   /** Called when user clicks Delete in a popup */
   onDelete?: (place: Place) => Promise<void> | void;
   /** Optional override to generate the image src (e.g. signed URLs). */
@@ -74,7 +76,6 @@ function normalizeImageSrc(
 function Recenter({ center, zoom = 10 }: { center: LatLngLiteral; zoom?: number }) {
   const map = useMap();
   useEffect(() => {
-    // Guard: only set view if lat/lng are valid numbers
     if (!isValidLatLng(center)) return;
     map.setView(center, zoom);
   }, [center, zoom, map]);
@@ -85,13 +86,13 @@ export default function MapView({
   places,
   center,
   zoom = 10,
+  onPlaceClick, // ✅ added
   onDelete,
   getImageSrc,
   className,
   attributionControl = false,
   zoomControl = true,
 }: Props) {
-  // Resolve a safe center:
   const resolvedCenter = useMemo<LatLngLiteral>(() => {
     if (isValidLatLng(center)) return center;
     const first = places[0]?.coords;
@@ -106,7 +107,6 @@ export default function MapView({
     });
   }, [places, getImageSrc]);
 
-  // Revoke any blob: URLs we created
   useEffect(() => {
     const blobUrls = markers
       .map((m) => m._preview)
@@ -135,7 +135,14 @@ export default function MapView({
         {markers.map((place) => {
           const icon: Icon = DefaultIcon;
           return (
-            <Marker key={place.id} position={place.coords} icon={icon}>
+            <Marker
+              key={place.id}
+              position={place.coords}
+              icon={icon}
+              eventHandlers={{
+                click: () => onPlaceClick?.(place), // ✅ call through
+              }}
+            >
               <Popup minWidth={280}>
                 <div className="space-y-2">
                   <div className="flex items-start justify-between gap-2">
