@@ -1,79 +1,135 @@
-"use client"
+// components/ImageUploader.tsx
+"use client";
 
-import type React from "react"
-import { useState, useRef } from "react"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
-import { Progress } from "@/components/ui/progress"
-import { X, Upload, ImageIcon, Loader2 } from "lucide-react"
+import { useState, useRef } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
+import { X, Upload, ImageIcon, Loader2 } from "lucide-react";
 
-interface ImageUploaderProps {
-  images: string[]
-  onImagesChange: (images: string[]) => void
-  maxImages?: number
-  disabled?: boolean
+// ---- Props (back-compat): supports either value/onChange OR images/onImagesChange
+type Common = {
+  maxImages?: number;
+  disabled?: boolean;
+  /** Optional S3 folder prefix; defaults to "places" */
+  folder?: string;
+};
+
+type ValueMode = {
+  value: string[];
+  onChange: (images: string[]) => void;
+} & Common;
+
+type ImagesMode = {
+  images: string[];
+  onImagesChange: (images: string[]) => void;
+} & Common;
+
+type ImageUploaderProps = ValueMode | ImagesMode;
+
+// ---- helpers
+function getListFromProps(p: ImageUploaderProps): string[] {
+  // support both prop names
+  return (p as any).images ?? (p as any).value ?? [];
+}
+function emitList(p: ImageUploaderProps, next: string[]) {
+  if ((p as any).onImagesChange) (p as any).onImagesChange(next);
+  else if ((p as any).onChange) (p as any).onChange(next);
 }
 
-async function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result))
-    reader.onerror = (e) => reject(e)
-    reader.readAsDataURL(file) // ✅ base64 string that survives JSON/localStorage
-  })
+async function presign(file: File, folder = "places") {
+  const res = await fetch("/api/s3/presign", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fileName: file.name, fileType: file.type, folder }),
+  });
+  if (!res.ok) throw new Error("Failed to request upload URL");
+  return (await res.json()) as {
+    url: string;
+    fields: Record<string, string>;
+    key: string;
+    publicUrl: string;
+  };
 }
 
-export default function ImageUploader({
-  images,
-  onImagesChange,
-  maxImages = 5,
-  disabled = false,
-}: ImageUploaderProps) {
-  const [uploading, setUploading] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState(0)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+async function uploadToS3(url: string, fields: Record<string, string>, file: File) {
+  const fd = new FormData();
+  Object.entries(fields).forEach(([k, v]) => fd.append(k, v));
+  fd.append("Content-Type", file.type);
+  fd.append("file", file);
+
+  const up = await fetch(url, { method: "POST", body: fd });
+  if (!up.ok) {
+    const text = await up.text().catch(() => "");
+    throw new Error(`Upload failed (${up.status}) ${text}`);
+  }
+}
+
+/**
+ * Component
+ */
+export default function ImageUploader(props: ImageUploaderProps) {
+  const images = getListFromProps(props);
+  const onEmit = (next: string[]) => emitList(props, next);
+
+  const maxImages = props.maxImages ?? 5;
+  const disabled = props.disabled ?? false;
+  const folder = props.folder ?? "places";
+
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0); // 0..100 across selected files
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files || [])
-    if (files.length === 0) return
+    const files = Array.from(event.target.files || []);
+    if (files.length === 0) return;
 
-    const remainingSlots = Math.max(0, maxImages - images.length)
-    const filesToAdd = files.slice(0, remainingSlots)
+    const remainingSlots = Math.max(0, maxImages - images.length);
+    const filesToAdd = files.slice(0, remainingSlots);
     if (filesToAdd.length === 0) {
-      // reset the input so the same files can be chosen again later
-      if (fileInputRef.current) fileInputRef.current.value = ""
-      return
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
     }
 
-    setUploading(true)
-    setUploadProgress(0)
+    setUploading(true);
+    setUploadProgress(0);
 
     try {
-      // Convert sequentially so we can show a meaningful progress bar
-      const newDataUrls: string[] = []
+      const newUrls: string[] = [];
+      // sequential uploads (gives simple progress: completed/total)
       for (let i = 0; i < filesToAdd.length; i++) {
-        const dataUrl = await fileToDataUrl(filesToAdd[i])
-        newDataUrls.push(dataUrl)
-        setUploadProgress(Math.round(((i + 1) / filesToAdd.length) * 100))
+        const f = filesToAdd[i];
+
+        // 1) presign
+        const { url, fields, publicUrl } = await presign(f, folder);
+
+        // 2) upload
+        await uploadToS3(url, fields, f);
+
+        // 3) collect URL (this is what we store in Firestore)
+        newUrls.push(publicUrl);
+
+        // progress (per-file granularity)
+        setUploadProgress(Math.round(((i + 1) / filesToAdd.length) * 100));
       }
 
-      onImagesChange([...images, ...newDataUrls])
+      onEmit([...images, ...newUrls]);
     } catch (error) {
-      console.error("Error reading images:", error)
-      alert("Failed to add images.")
+      console.error("Image upload error:", error);
+      alert("Failed to upload images.");
     } finally {
-      setUploading(false)
-      setUploadProgress(0)
-      if (fileInputRef.current) fileInputRef.current.value = ""
+      setUploading(false);
+      setUploadProgress(0);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
-  }
+  };
 
   const removeImage = (index: number) => {
-    const next = images.filter((_, i) => i !== index)
-    onImagesChange(next)
-  }
+    const next = images.filter((_, i) => i !== index);
+    onEmit(next);
+  };
 
-  const canAddMore = images.length < maxImages && !disabled
+  const canAddMore = images.length < maxImages && !disabled;
 
   return (
     <div className="space-y-4">
@@ -98,12 +154,12 @@ export default function ImageUploader({
           >
             {uploading ? (
               <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Adding…
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Uploading…
               </>
             ) : (
               <>
-                <Upload className="h-4 w-4 mr-2" />
+                <Upload className="mr-2 h-4 w-4" />
                 Add Images ({images.length}/{maxImages})
               </>
             )}
@@ -115,30 +171,29 @@ export default function ImageUploader({
       {uploading && (
         <div className="space-y-2">
           <Progress value={uploadProgress} className="w-full" />
-          <p className="text-sm text-muted-foreground text-center">
-            Processing images… {uploadProgress}%
-          </p>
+          <p className="text-center text-sm text-muted-foreground">Uploading… {uploadProgress}%</p>
         </div>
       )}
 
       {/* Image Grid */}
-      {images.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+      {images.length > 0 && !uploading && (
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
           {images.map((imageUrl, index) => (
-            <Card key={index} className="relative group">
+            <Card key={index} className="group relative">
               <CardContent className="p-2">
                 <div className="relative aspect-square">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={imageUrl || "/placeholder.svg"}
                     alt={`Upload ${index + 1}`}
-                    className="w-full h-full object-cover rounded-md"
+                    className="h-full w-full rounded-md object-cover"
                   />
                   {!disabled && (
                     <Button
                       type="button"
                       variant="destructive"
                       size="sm"
-                      className="absolute top-1 right-1 h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="absolute right-1 top-1 h-6 w-6 p-0 opacity-0 transition-opacity group-hover:opacity-100"
                       onClick={() => removeImage(index)}
                     >
                       <X className="h-3 w-3" />
@@ -155,12 +210,14 @@ export default function ImageUploader({
       {images.length === 0 && !uploading && (
         <Card className="border-dashed">
           <CardContent className="p-8 text-center">
-            <ImageIcon className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <p className="text-muted-foreground mb-2">No images uploaded yet</p>
-            <p className="text-sm text-muted-foreground">Add up to {maxImages} images to showcase this place</p>
+            <ImageIcon className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
+            <p className="mb-2 text-muted-foreground">No images uploaded yet</p>
+            <p className="text-sm text-muted-foreground">
+              Add up to {maxImages} images to showcase this place
+            </p>
           </CardContent>
         </Card>
       )}
     </div>
-  )
+  );
 }
