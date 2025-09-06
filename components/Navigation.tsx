@@ -6,56 +6,42 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Globe,
   Menu,
   X,
   Search,
-  Navigation as NavigationIcon, // lucide: Navigation / Navigation2
+  Navigation as NavigationIcon,
   Route,
   Compass,
   Map,
   Plus,
 } from "lucide-react";
-import { useTranslation, type Language, getAvailableLanguages } from "@/lib/i18n";
 
-interface NavigationProps {
-  language?: Language;
-  onLanguageChange?: (language: Language) => void;
-}
-
-export default function Navigation({ language = "en", onLanguageChange }: NavigationProps) {
+export default function Navigation() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const pathname = usePathname();
-  const { t } = useTranslation(language);
 
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";
     return pathname === href || pathname?.startsWith(href + "/");
   };
 
-  // 👇 Both Map (interactive) and Places (list with filters)
+  // Keep both Map (interactive) and Places (list + filters)
   const navItems = [
     { href: "/", label: "Home", icon: Compass },
-    { href: "/map", label: "Map", icon: Map },          // ✅ Map page
-    { href: "/places", label: "Places", icon: Map },    // ✅ Places list
+    { href: "/map", label: "Browse Map", icon: Map },
     { href: "/search", label: "Search", icon: Search },
     { href: "/near-me", label: "Near Me", icon: NavigationIcon },
     { href: "/plan-trip", label: "Plan Trip", icon: Route },
     { href: "/trips", label: "Trips", icon: Route },
     { href: "/submit", label: "Submit a Place", icon: Plus },
+    { href: "/places", label: "Places", icon: Map },
   ];
 
   return (
     <nav className="sticky top-0 z-50 border-b bg-flag-gradient text-white shadow-md">
       <div className="container mx-auto px-4">
         <div className="flex h-16 items-center justify-between">
-          {/* Logo */}
+          {/* Logo / Brand */}
           <Link href="/" className="flex items-center gap-2">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/15 ring-1 ring-white/30 backdrop-blur-sm">
               <span className="text-sm font-bold">HT</span>
@@ -78,34 +64,23 @@ export default function Navigation({ language = "en", onLanguageChange }: Naviga
                   }`}
                 >
                   <ActiveIcon className="h-4 w-4" />
-                  <span>{item.label}</span>
+                  <span>
+                    {item.label === "Submit a Place" ? (
+                      <span className="inline-flex items-center gap-1">
+                        <Plus className="h-3.5 w-3.5" />
+                        Submit a Place
+                      </span>
+                    ) : (
+                      item.label
+                    )}
+                  </span>
                 </Link>
               );
             })}
           </div>
 
-          {/* Lang + Mobile button */}
+          {/* Mobile menu button */}
           <div className="flex items-center gap-2">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="text-white hover:bg-white/10">
-                  <Globe className="mr-1 h-4 w-4" />
-                  <span className="hidden sm:inline">{language.toUpperCase()}</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="bg-white/90 backdrop-blur">
-                {getAvailableLanguages().map((lang) => (
-                  <DropdownMenuItem
-                    key={lang.code}
-                    onClick={() => onLanguageChange?.(lang.code)}
-                    className={language === lang.code ? "bg-accent/40" : ""}
-                  >
-                    {lang.name}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-
             <Button
               variant="ghost"
               size="sm"
@@ -137,7 +112,16 @@ export default function Navigation({ language = "en", onLanguageChange }: Naviga
                     onClick={() => setMobileMenuOpen(false)}
                   >
                     <ActiveIcon className="h-4 w-4" />
-                    <span>{item.label}</span>
+                    <span>
+                      {item.label === "Submit a Place" ? (
+                        <span className="inline-flex items-center gap-1">
+                          <Plus className="h-3.5 w-3.5" />
+                          Submit a Place
+                        </span>
+                      ) : (
+                        item.label
+                      )}
+                    </span>
                   </Link>
                 );
               })}
