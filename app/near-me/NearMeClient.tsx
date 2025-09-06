@@ -69,8 +69,7 @@ export default function NearMeClient() {
           <div className="h-[70vh]">
             <MapView
               places={places}
-              center={coords ?? [-8.8742, 125.7275]}
-              showUserLocation={!!coords}
+              center={coords ?? { lat: -8.8742, lng: 125.7275 }}
               className="h-full"
             />
           </div>
