@@ -92,8 +92,8 @@ export default function AdminPlaceCard({ place, onUpdate, language = "en" }: Adm
     pending: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
     flagged: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
   } as const;
-  // guard optional status
   const statusKey = (place.status ?? "published") as keyof typeof statusColors;
+  const statusI18nKey = `status.${statusKey}` as any;
 
   const categoryColors = {
     history: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
@@ -103,8 +103,8 @@ export default function AdminPlaceCard({ place, onUpdate, language = "en" }: Adm
     memorials: "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200",
     other: "bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-200",
   } as const;
-  // normalize memorial → memorials
   const categoryKey = (place.category === "memorial" ? "memorials" : place.category) as keyof typeof categoryColors;
+  const categoryI18nKey = `category.${categoryKey}` as any;
 
   return (
     <>
@@ -117,7 +117,7 @@ export default function AdminPlaceCard({ place, onUpdate, language = "en" }: Adm
               className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
             />
             <div className="absolute left-2 top-2 flex gap-2">
-              <Badge className={statusColors[statusKey]}>{t(`status.${statusKey}`)}</Badge>
+              <Badge className={statusColors[statusKey]}>{t(statusI18nKey)}</Badge>
               {place.featured && (
                 <Badge variant="secondary" className="bg-yellow-100 text-yellow-800">
                   <Star className="mr-1 h-3 w-3" />
@@ -133,7 +133,7 @@ export default function AdminPlaceCard({ place, onUpdate, language = "en" }: Adm
             <h3 className="text-lg font-semibold leading-tight transition-colors group-hover:text-primary">
               {place.title}
             </h3>
-            <Badge className={categoryColors[categoryKey]}>{t(`category.${categoryKey}`)}</Badge>
+            <Badge className={categoryColors[categoryKey]}>{t(categoryI18nKey)}</Badge>
           </div>
 
           <p className="mb-3 line-clamp-2 text-sm text-muted-foreground">{place.description}</p>
