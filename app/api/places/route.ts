@@ -9,13 +9,34 @@ import {
 
 export const dynamic = "force-dynamic"
 
-const REGION = process.env.AWS_REGION!
-const BUCKET = process.env.S3_BUCKET!
-const PREFIX = (process.env.S3_PLACES_PREFIX || "places/").replace(/^\/+|\/+$/g, "") + "/"
+// ---- small helpers -------------------------------------------------
+function requireEnv() {
+  const REGION = process.env.AWS_REGION
+  const BUCKET = process.env.S3_BUCKET
+  const RAW_PREFIX = process.env.S3_PLACES_PREFIX || "places/"
+  const PREFIX = RAW_PREFIX.replace(/^\/+|\/+$/g, "") + "/"
 
-const s3 = new S3Client({ region: REGION })
+  const missing: string[] = []
+  if (!REGION) missing.push("AWS_REGION")
+  if (!BUCKET) missing.push("S3_BUCKET")
+  if (!process.env.AWS_ACCESS_KEY_ID) missing.push("AWS_ACCESS_KEY_ID")
+  if (!process.env.AWS_SECRET_ACCESS_KEY) missing.push("AWS_SECRET_ACCESS_KEY")
 
-// ---- stream helpers without Buffer ----
+  if (missing.length) {
+    return {
+      error: `Missing required environment variables: ${missing.join(", ")}`,
+      ok: false as const,
+    }
+  }
+
+  return {
+    ok: true as const,
+    REGION,
+    BUCKET,
+    PREFIX,
+  }
+}
+
 function concatUint8Arrays(chunks: Uint8Array[]) {
   let len = 0
   for (const c of chunks) len += c.byteLength
@@ -29,15 +50,8 @@ function concatUint8Arrays(chunks: Uint8Array[]) {
 }
 
 async function bodyToString(body: any): Promise<string> {
-  // S3 SDK v3 in Node often provides transformToString()
-  if (body?.transformToString) {
-    return await body.transformToString()
-  }
-  // Blob in edge/browser runtimes
-  if (typeof body?.text === "function") {
-    return await body.text()
-  }
-  // WHATWG ReadableStream
+  if (body?.transformToString) return body.transformToString()
+  if (typeof body?.text === "function") return body.text()
   if (body?.getReader) {
     const reader = body.getReader()
     const chunks: Uint8Array[] = []
@@ -48,52 +62,77 @@ async function bodyToString(body: any): Promise<string> {
     }
     return new TextDecoder("utf-8").decode(concatUint8Arrays(chunks))
   }
-  // Async iterable (Node stream polyfilled by AWS SDK)
   if (body && typeof body[Symbol.asyncIterator] === "function") {
     const chunks: Uint8Array[] = []
     for await (const chunk of body as AsyncIterable<Uint8Array | string>) {
-      if (typeof chunk === "string") {
-        chunks.push(new TextEncoder().encode(chunk))
-      } else {
-        chunks.push(chunk)
-      }
+      chunks.push(typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk)
     }
     return new TextDecoder("utf-8").decode(concatUint8Arrays(chunks))
   }
   return ""
 }
 
-// GET /api/places -> list all
+const newId = () =>
+  (globalThis as any).crypto?.randomUUID?.() || "id-" + Math.random().toString(36).slice(2, 10)
+
+// ---- GET /api/places  ----------------------------------------------
 export async function GET() {
+  const cfg = requireEnv()
+  if (!cfg.ok) {
+    console.error("ENV ERROR /api/places GET:", cfg.error)
+    return NextResponse.json({ error: cfg.error }, { status: 500 })
+  }
+
+  const s3 = new S3Client({ region: cfg.REGION })
+
   try {
-    const listed = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: PREFIX }))
+    const listed = await s3.send(
+      new ListObjectsV2Command({ Bucket: cfg.BUCKET, Prefix: cfg.PREFIX })
+    )
     const keys = (listed.Contents || [])
       .map((o) => o.Key)
       .filter((k): k is string => !!k && k.endsWith(".json"))
 
     const places = await Promise.all(
       keys.map(async (Key) => {
-        const obj = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key }))
+        const obj = await s3.send(new GetObjectCommand({ Bucket: cfg.BUCKET, Key }))
         const text = await bodyToString(obj.Body as any)
         return JSON.parse(text)
       })
     )
 
     return NextResponse.json(places, { status: 200 })
-  } catch (err) {
-    console.error("LIST places error:", err)
-    return NextResponse.json({ error: "Failed to list places" }, { status: 500 })
+  } catch (err: any) {
+    // Surface AWS specifics so the logs tell us exactly what's wrong
+    console.error("LIST places error:", {
+      name: err?.name,
+      code: err?.$metadata?.httpStatusCode,
+      region: cfg.REGION,
+      bucket: cfg.BUCKET,
+      prefix: cfg.PREFIX,
+      message: err?.message,
+    })
+    return NextResponse.json(
+      { error: "Failed to list places", detail: err?.name || err?.message || String(err) },
+      { status: 500 }
+    )
   }
 }
 
-// POST /api/places -> create
+// ---- POST /api/places  ---------------------------------------------
 export async function POST(req: Request) {
+  const cfg = requireEnv()
+  if (!cfg.ok) {
+    console.error("ENV ERROR /api/places POST:", cfg.error)
+    return NextResponse.json({ error: cfg.error }, { status: 500 })
+  }
+
+  const s3 = new S3Client({ region: cfg.REGION })
+
   try {
     const data = await req.json()
     const now = Date.now()
-    const id =
-      (globalThis as any).crypto?.randomUUID?.() || "id-" + Math.random().toString(36).slice(2, 10)
-
+    const id = newId()
     const place = {
       ...data,
       id,
@@ -103,10 +142,10 @@ export async function POST(req: Request) {
       updatedAt: now,
     }
 
-    const Key = `${PREFIX}${id}.json`
+    const Key = `${cfg.PREFIX}${id}.json`
     await s3.send(
       new PutObjectCommand({
-        Bucket: BUCKET,
+        Bucket: cfg.BUCKET,
         Key,
         Body: JSON.stringify(place),
         ContentType: "application/json",
@@ -114,8 +153,15 @@ export async function POST(req: Request) {
     )
 
     return NextResponse.json(place, { status: 201 })
-  } catch (err) {
-    console.error("CREATE place error:", err)
-    return NextResponse.json({ error: "Failed to create place" }, { status: 500 })
+  } catch (err: any) {
+    console.error("CREATE place error:", {
+      name: err?.name,
+      code: err?.$metadata?.httpStatusCode,
+      message: err?.message,
+    })
+    return NextResponse.json(
+      { error: "Failed to create place", detail: err?.name || err?.message || String(err) },
+      { status: 500 }
+    )
   }
 }
