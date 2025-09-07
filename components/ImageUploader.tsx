@@ -5,7 +5,7 @@ import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { X, Upload, ImageIcon, Loader2 } from "lucide-react";
+import { X, Upload, ImageIcon, Loader2, Camera } from "lucide-react";
 
 // ---- Props (back-compat): supports either value/onChange OR images/onImagesChange
 type Common = {
@@ -64,9 +64,6 @@ async function uploadToS3(url: string, fields: Record<string, string>, file: Fil
   }
 }
 
-/**
- * Component
- */
 export default function ImageUploader(props: ImageUploaderProps) {
   const images = getListFromProps(props);
   const onEmit = (next: string[]) => emitList(props, next);
@@ -79,7 +76,8 @@ export default function ImageUploader(props: ImageUploaderProps) {
 
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0); // 0..100 across selected files
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);   // gallery/files
+  const cameraInputRef = useRef<HTMLInputElement>(null); // camera capture
 
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const picked = Array.from(event.target.files || []);
@@ -96,6 +94,7 @@ export default function ImageUploader(props: ImageUploaderProps) {
     const okSize = picked.filter((f) => f.size <= MAX_UPLOAD_BYTES);
     if (okSize.length === 0) {
       if (fileInputRef.current) fileInputRef.current.value = "";
+      if (cameraInputRef.current) cameraInputRef.current.value = "";
       return;
     }
 
@@ -103,6 +102,7 @@ export default function ImageUploader(props: ImageUploaderProps) {
     const filesToAdd = okSize.slice(0, remainingSlots);
     if (filesToAdd.length === 0) {
       if (fileInputRef.current) fileInputRef.current.value = "";
+      if (cameraInputRef.current) cameraInputRef.current.value = "";
       return;
     }
 
@@ -136,6 +136,7 @@ export default function ImageUploader(props: ImageUploaderProps) {
       setUploading(false);
       setUploadProgress(0);
       if (fileInputRef.current) fileInputRef.current.value = "";
+      if (cameraInputRef.current) cameraInputRef.current.value = "";
     }
   };
 
@@ -148,19 +149,49 @@ export default function ImageUploader(props: ImageUploaderProps) {
 
   return (
     <div className="space-y-4">
-      {/* Upload Button */}
+      {/* Hidden inputs */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        onChange={handleFileSelect}
+        className="hidden"
+        disabled={uploading}
+      />
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment" // opens camera on mobile
+        onChange={handleFileSelect}
+        className="hidden"
+        disabled={uploading}
+      />
+
+      {/* Buttons */}
       {canAddMore && (
-        <div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"      // opens camera on mobile
-            multiple
-            onChange={handleFileSelect}
-            className="hidden"
-            disabled={uploading}
-          />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => cameraInputRef.current?.click()}
+            disabled={uploading || disabled}
+            className="w-full"
+          >
+            {uploading ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Uploading…
+              </>
+            ) : (
+              <>
+                <Camera className="mr-2 h-4 w-4" />
+                Use Camera
+              </>
+            )}
+          </Button>
+
           <Button
             type="button"
             variant="outline"
@@ -176,14 +207,13 @@ export default function ImageUploader(props: ImageUploaderProps) {
             ) : (
               <>
                 <Upload className="mr-2 h-4 w-4" />
-                Add Images ({images.length}/{maxImages})
+                Upload from Library
               </>
             )}
           </Button>
 
-          {/* helper text */}
-          <p className="mt-2 text-xs text-muted-foreground">
-            You can take a photo on mobile or choose from your device. Max size <strong>25&nbsp;MB</strong> per file.
+          <p className="sm:col-span-2 mt-1 text-xs text-muted-foreground">
+            Max size <strong>25&nbsp;MB</strong> per file. You can take a photo or choose from your device.
           </p>
         </div>
       )}
