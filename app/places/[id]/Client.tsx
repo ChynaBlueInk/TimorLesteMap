@@ -56,6 +56,7 @@ export default function PlaceDetailClient({ id }: { id: string }) {
         ) : (
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
             <div className="space-y-6 lg:col-span-2">
+              {/* Header */}
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <h1 className="text-3xl font-bold">{place.title}</h1>
@@ -104,12 +105,41 @@ export default function PlaceDetailClient({ id }: { id: string }) {
                 </div>
               </div>
 
+              {/* Image gallery */}
+              {Array.isArray(place.images) && place.images.length > 0 ? (
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {place.images.map((src: string, i: number) => (
+                    <Card key={i}>
+                      <CardContent className="p-2">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={src}
+                          alt={`${place.title} image ${i + 1}`}
+                          className="h-64 w-full rounded object-cover md:h-80"
+                          crossOrigin="anonymous"
+                          draggable={false}
+                        />
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              ) : (
+                <Card>
+                  <CardContent className="p-8 text-center">
+                    <p className="text-muted-foreground">No images yet.</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      You can add images by choosing <strong>Edit</strong> above.
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Map (no fragile direct access to coords) */}
               <Card>
                 <CardContent className="p-0">
                   <div className="h-[360px]">
                     <MapView
                       places={[place]}
-                      center={{ lat: place.coords.lat, lng: place.coords.lng }}
                       zoom={14}
                       attributionControl={false}
                       zoomControl={true}
@@ -119,29 +149,41 @@ export default function PlaceDetailClient({ id }: { id: string }) {
                 </CardContent>
               </Card>
 
-              <Card>
-                <CardContent className="p-6">
-                  <h3 className="mb-2 font-semibold">About</h3>
-                  <p className="text-muted-foreground">{place.description}</p>
-                </CardContent>
-              </Card>
+              {/* About */}
+              {place.description ? (
+                <Card>
+                  <CardContent className="p-6">
+                    <h3 className="mb-2 font-semibold">About</h3>
+                    <p className="text-muted-foreground">{place.description}</p>
+                  </CardContent>
+                </Card>
+              ) : null}
 
               <Reviews placeId={place.id} />
             </div>
 
+            {/* Sidebar */}
             <div className="space-y-6">
               <Card>
                 <CardContent className="p-6">
                   <h3 className="mb-2 font-semibold">Sources</h3>
                   {Array.isArray(place.sources) && place.sources.length > 0 ? (
                     <ul className="list-disc space-y-1 pl-5 text-sm">
-                      {place.sources.map((s, idx) => (
-                        <li key={idx}>
-                          <a href={s} target="_blank" rel="noreferrer" className="text-primary underline">
-                            {s}
-                          </a>
-                        </li>
-                      ))}
+                      {place.sources.map((s: any, idx: number) => {
+                        const label = typeof s === "string" ? s : s?.label ?? s?.url ?? `Source ${idx + 1}`;
+                        const url = typeof s === "string" ? s : s?.url ?? undefined;
+                        return (
+                          <li key={idx}>
+                            {url ? (
+                              <a href={url} target="_blank" rel="noreferrer" className="text-primary underline">
+                                {label}
+                              </a>
+                            ) : (
+                              label
+                            )}
+                          </li>
+                        );
+                      })}
                     </ul>
                   ) : (
                     <p className="text-sm text-muted-foreground">No sources listed.</p>
