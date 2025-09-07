@@ -45,15 +45,18 @@ export async function POST(req: Request) {
 
     const key = `${folder || "places"}/${Date.now()}-${safeFileName(fileName)}`;
 
-    const { url, fields } = await createPresignedPost(s3, {
-      Bucket: BUCKET,
-      Key: key,
-      Conditions: [
-        ["content-length-range", 0, 8_000_000],                 // ~8MB max
-        ["starts-with", "$Content-Type", fileType.split("/")[0] + "/"],
-      ],
-      Expires: 60, // seconds
-    });
+   const MAX_UPLOAD_BYTES = 25_000_000; // 25 MB
+const majorType = (fileType || "application/octet-stream").split("/")[0] + "/";
+
+const { url, fields } = await createPresignedPost(s3, {
+  Bucket: BUCKET,
+  Key: key,
+  Conditions: [
+    ["content-length-range", 0, MAX_UPLOAD_BYTES],
+    ["starts-with", "$Content-Type", majorType],
+  ],
+  Expires: 60, // seconds
+});
 
     const publicUrl = `https://${BUCKET}.s3.${REGION}.amazonaws.com/${key}`;
 
