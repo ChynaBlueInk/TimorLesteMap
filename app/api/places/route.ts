@@ -1,4 +1,3 @@
-// app/api/places/route.ts
 import { NextResponse } from "next/server"
 import {
   S3Client,
@@ -9,34 +8,23 @@ import {
 
 export const dynamic = "force-dynamic"
 
-// ---- small helpers -------------------------------------------------
+/** Validate env & normalize prefix */
 function requireEnv() {
-  const REGION = process.env.AWS_REGION
-  const BUCKET = process.env.S3_BUCKET
-  const RAW_PREFIX = process.env.S3_PLACES_PREFIX || "places/"
+  const REGION = (process.env.AWS_REGION || "").trim()
+  const BUCKET = (process.env.S3_BUCKET || "").trim()
+  const RAW_PREFIX = (process.env.S3_PLACES_PREFIX || "places/").trim()
   const PREFIX = RAW_PREFIX.replace(/^\/+|\/+$/g, "") + "/"
 
-  const missing: string[] = []
-  if (!REGION) missing.push("AWS_REGION")
-  if (!BUCKET) missing.push("S3_BUCKET")
-  if (!process.env.AWS_ACCESS_KEY_ID) missing.push("AWS_ACCESS_KEY_ID")
-  if (!process.env.AWS_SECRET_ACCESS_KEY) missing.push("AWS_SECRET_ACCESS_KEY")
-
-  if (missing.length) {
-    return {
-      error: `Missing required environment variables: ${missing.join(", ")}`,
-      ok: false as const,
-    }
-  }
-
-  return {
-    ok: true as const,
-    REGION,
-    BUCKET,
-    PREFIX,
-  }
+  const miss: string[] = []
+  if (!REGION) miss.push("AWS_REGION")
+  if (!BUCKET) miss.push("S3_BUCKET")
+  if (!process.env.AWS_ACCESS_KEY_ID) miss.push("AWS_ACCESS_KEY_ID")
+  if (!process.env.AWS_SECRET_ACCESS_KEY) miss.push("AWS_SECRET_ACCESS_KEY")
+  if (miss.length) return { ok: false as const, error: `Missing env: ${miss.join(", ")}` }
+  return { ok: true as const, REGION, BUCKET, PREFIX }
 }
 
+/** Minimal stream helpers (no Node Buffer) */
 function concatUint8Arrays(chunks: Uint8Array[]) {
   let len = 0
   for (const c of chunks) len += c.byteLength
@@ -48,7 +36,6 @@ function concatUint8Arrays(chunks: Uint8Array[]) {
   }
   return out
 }
-
 async function bodyToString(body: any): Promise<string> {
   if (body?.transformToString) return body.transformToString()
   if (typeof body?.text === "function") return body.text()
@@ -75,15 +62,20 @@ async function bodyToString(body: any): Promise<string> {
 const newId = () =>
   (globalThis as any).crypto?.randomUUID?.() || "id-" + Math.random().toString(36).slice(2, 10)
 
-// ---- GET /api/places  ----------------------------------------------
+function client(region: string) {
+  // forcePathStyle helps avoid TLS wildcard issues if a bucket name had dots.
+  return new S3Client({ region, forcePathStyle: true })
+}
+
+// GET /api/places  -> list all place JSONs under prefix
 export async function GET() {
   const cfg = requireEnv()
   if (!cfg.ok) {
     console.error("ENV ERROR /api/places GET:", cfg.error)
-    return NextResponse.json({ error: cfg.error }, { status: 500 })
+    return NextResponse.json({ error: "Failed to list places", detail: cfg.error }, { status: 500 })
   }
 
-  const s3 = new S3Client({ region: cfg.REGION })
+  const s3 = client(cfg.REGION)
 
   try {
     const listed = await s3.send(
@@ -103,31 +95,37 @@ export async function GET() {
 
     return NextResponse.json(places, { status: 200 })
   } catch (err: any) {
-    // Surface AWS specifics so the logs tell us exactly what's wrong
+    // These details will show up in Vercel logs.
     console.error("LIST places error:", {
       name: err?.name,
+      message: err?.message,
       code: err?.$metadata?.httpStatusCode,
       region: cfg.REGION,
       bucket: cfg.BUCKET,
       prefix: cfg.PREFIX,
-      message: err?.message,
+      // Sometimes AWS SDK nests the original error on 'cause' or 'originalError'
+      cause: err?.cause?.message || undefined,
     })
     return NextResponse.json(
-      { error: "Failed to list places", detail: err?.name || err?.message || String(err) },
+      {
+        error: "Failed to list places",
+        // surfacing the name helps identify region mismatch vs access vs not found
+        detail: err?.name || err?.message || "UnknownError",
+      },
       { status: 500 }
     )
   }
 }
 
-// ---- POST /api/places  ---------------------------------------------
+// POST /api/places  -> create new place JSON
 export async function POST(req: Request) {
   const cfg = requireEnv()
   if (!cfg.ok) {
     console.error("ENV ERROR /api/places POST:", cfg.error)
-    return NextResponse.json({ error: cfg.error }, { status: 500 })
+    return NextResponse.json({ error: "Failed to create place", detail: cfg.error }, { status: 500 })
   }
 
-  const s3 = new S3Client({ region: cfg.REGION })
+  const s3 = client(cfg.REGION)
 
   try {
     const data = await req.json()
@@ -156,11 +154,11 @@ export async function POST(req: Request) {
   } catch (err: any) {
     console.error("CREATE place error:", {
       name: err?.name,
-      code: err?.$metadata?.httpStatusCode,
       message: err?.message,
+      code: err?.$metadata?.httpStatusCode,
     })
     return NextResponse.json(
-      { error: "Failed to create place", detail: err?.name || err?.message || String(err) },
+      { error: "Failed to create place", detail: err?.name || err?.message || "UnknownError" },
       { status: 500 }
     )
   }

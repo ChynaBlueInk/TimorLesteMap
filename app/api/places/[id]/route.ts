@@ -1,4 +1,3 @@
-// app/api/places/[id]/route.ts
 import { NextResponse } from "next/server"
 import {
   S3Client,
@@ -10,18 +9,17 @@ import {
 export const dynamic = "force-dynamic"
 
 function requireEnv() {
-  const REGION = process.env.AWS_REGION
-  const BUCKET = process.env.S3_BUCKET
-  const RAW_PREFIX = process.env.S3_PLACES_PREFIX || "places/"
+  const REGION = (process.env.AWS_REGION || "").trim()
+  const BUCKET = (process.env.S3_BUCKET || "").trim()
+  const RAW_PREFIX = (process.env.S3_PLACES_PREFIX || "places/").trim()
   const PREFIX = RAW_PREFIX.replace(/^\/+|\/+$/g, "") + "/"
 
-  const missing: string[] = []
-  if (!REGION) missing.push("AWS_REGION")
-  if (!BUCKET) missing.push("S3_BUCKET")
-  if (!process.env.AWS_ACCESS_KEY_ID) missing.push("AWS_ACCESS_KEY_ID")
-  if (!process.env.AWS_SECRET_ACCESS_KEY) missing.push("AWS_SECRET_ACCESS_KEY")
-
-  if (missing.length) return { ok: false as const, error: `Missing env: ${missing.join(", ")}` }
+  const miss: string[] = []
+  if (!REGION) miss.push("AWS_REGION")
+  if (!BUCKET) miss.push("S3_BUCKET")
+  if (!process.env.AWS_ACCESS_KEY_ID) miss.push("AWS_ACCESS_KEY_ID")
+  if (!process.env.AWS_SECRET_ACCESS_KEY) miss.push("AWS_SECRET_ACCESS_KEY")
+  if (miss.length) return { ok: false as const, error: `Missing env: ${miss.join(", ")}` }
   return { ok: true as const, REGION, BUCKET, PREFIX }
 }
 
@@ -59,11 +57,15 @@ async function bodyToString(body: any): Promise<string> {
   return ""
 }
 
-// ---- GET /api/places/:id -------------------------------------------
+function client(region: string) {
+  return new S3Client({ region, forcePathStyle: true })
+}
+
+// GET /api/places/:id
 export async function GET(_: Request, ctx: { params: { id: string } }) {
   const cfg = requireEnv()
   if (!cfg.ok) return NextResponse.json({ error: cfg.error }, { status: 500 })
-  const s3 = new S3Client({ region: cfg.REGION })
+  const s3 = client(cfg.REGION)
 
   const Key = `${cfg.PREFIX}${ctx.params.id}.json`
   try {
@@ -71,27 +73,26 @@ export async function GET(_: Request, ctx: { params: { id: string } }) {
     const text = await bodyToString(obj.Body as any)
     return NextResponse.json(JSON.parse(text), { status: 200 })
   } catch (err: any) {
-    const name = err?.name || ""
-    if (name === "NoSuchKey" || err?.$metadata?.httpStatusCode === 404) {
+    const code = err?.$metadata?.httpStatusCode
+    const name = err?.name
+    if (name === "NoSuchKey" || code === 404) {
       return NextResponse.json({ error: "Not found" }, { status: 404 })
     }
-    console.error("GET place error:", { name, code: err?.$metadata?.httpStatusCode, message: err?.message })
-    return NextResponse.json({ error: "Failed to read place", detail: name || err?.message }, { status: 500 })
+    console.error("GET place error:", { name, code, message: err?.message })
+    return NextResponse.json({ error: "Failed to read place", detail: name || "UnknownError" }, { status: 500 })
   }
 }
 
-// ---- PATCH /api/places/:id -----------------------------------------
+// PATCH /api/places/:id
 export async function PATCH(req: Request, ctx: { params: { id: string } }) {
   const cfg = requireEnv()
   if (!cfg.ok) return NextResponse.json({ error: cfg.error }, { status: 500 })
-  const s3 = new S3Client({ region: cfg.REGION })
+  const s3 = client(cfg.REGION)
 
   const Key = `${cfg.PREFIX}${ctx.params.id}.json`
   try {
     const obj = await s3.send(new GetObjectCommand({ Bucket: cfg.BUCKET, Key }))
-    const text = await bodyToString(obj.Body as any)
-    const current = JSON.parse(text)
-
+    const current = JSON.parse(await bodyToString(obj.Body as any))
     const patch = await req.json()
     const next = { ...current, ...patch, updatedAt: Date.now() }
 
@@ -107,15 +108,15 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
     return NextResponse.json(next, { status: 200 })
   } catch (err: any) {
     console.error("PATCH place error:", { name: err?.name, code: err?.$metadata?.httpStatusCode, message: err?.message })
-    return NextResponse.json({ error: "Failed to update place", detail: err?.name || err?.message }, { status: 500 })
+    return NextResponse.json({ error: "Failed to update place", detail: err?.name || "UnknownError" }, { status: 500 })
   }
 }
 
-// ---- DELETE /api/places/:id ----------------------------------------
+// DELETE /api/places/:id
 export async function DELETE(_: Request, ctx: { params: { id: string } }) {
   const cfg = requireEnv()
   if (!cfg.ok) return NextResponse.json({ error: cfg.error }, { status: 500 })
-  const s3 = new S3Client({ region: cfg.REGION })
+  const s3 = client(cfg.REGION)
 
   const Key = `${cfg.PREFIX}${ctx.params.id}.json`
   try {
@@ -123,6 +124,6 @@ export async function DELETE(_: Request, ctx: { params: { id: string } }) {
     return NextResponse.json({ ok: true }, { status: 200 })
   } catch (err: any) {
     console.error("DELETE place error:", { name: err?.name, code: err?.$metadata?.httpStatusCode, message: err?.message })
-    return NextResponse.json({ error: "Failed to delete place", detail: err?.name || err?.message }, { status: 500 })
+    return NextResponse.json({ error: "Failed to delete place", detail: err?.name || "UnknownError" }, { status: 500 })
   }
 }
