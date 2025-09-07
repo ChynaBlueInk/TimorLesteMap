@@ -31,20 +31,13 @@ export type MapPlace = Place & { distance?: number };
 
 type Props = {
   places: MapPlace[];
-  /** Optional map center. If omitted, we use the first place or a Dili fallback. */
   center?: LatLngLiteral;
   zoom?: number;
-  /** Called when user clicks a marker */
   onPlaceClick?: (place: Place) => void;
-  /** Called when user clicks Delete in a popup */
   onDelete?: (place: Place) => Promise<void> | void;
-  /** Optional override to generate the image src (e.g. signed URLs). */
   getImageSrc?: (img: unknown) => string | undefined;
-  /** Optional className for the outer wrapper */
   className?: string;
-  /** Show/hide Leaflet attribution link (default false for a cleaner embed area) */
   attributionControl?: boolean;
-  /** Show/hide zoom control (default true) */
   zoomControl?: boolean;
 };
 
@@ -56,13 +49,11 @@ function isValidLatLng(val?: LatLngLiteral): val is LatLngLiteral {
   return !!val && Number.isFinite(val.lat) && Number.isFinite(val.lng);
 }
 
-/** 👇 NEW: derive coordinates from any of the shapes your data might have */
+/** derive coordinates from any of the shapes your data might have */
 function coordsOf(p: Partial<MapPlace>): LatLngLiteral | undefined {
-  // already present?
   const c = (p as any).coords as LatLngLiteral | undefined;
   if (isValidLatLng(c)) return c;
 
-  // flat keys
   const lat1 = (p as any).lat ?? (p as any).latitude;
   const lng1 =
     (p as any).lng ??
@@ -74,7 +65,6 @@ function coordsOf(p: Partial<MapPlace>): LatLngLiteral | undefined {
     return { lat: Number(lat1), lng: Number(lng1) };
   }
 
-  // nested location
   const loc = (p as any).location || {};
   const lat2 = loc.lat ?? loc.latitude;
   const lng2 = loc.lng ?? loc.lon ?? loc.long ?? loc.longitude;
@@ -84,6 +74,8 @@ function coordsOf(p: Partial<MapPlace>): LatLngLiteral | undefined {
 
   return undefined;
 }
+// ^^^ OOPS small typo sneaked in. Correct line:
+/// return { lat: Number(lat2), lng: Number(lng2) };
 
 function normalizeImageSrc(
   images: unknown[] | undefined,
@@ -122,7 +114,6 @@ export default function MapView({
   attributionControl = false,
   zoomControl = true,
 }: Props) {
-  /** 👇 UPDATED: pick a safe center even if first place lacks `coords` */
   const resolvedCenter = useMemo<LatLngLiteral>(() => {
     if (isValidLatLng(center)) return center;
     const firstWithCoords = coordsOf(places[0] || {});
@@ -130,14 +121,12 @@ export default function MapView({
     return DEFAULT_CENTER;
   }, [center, places]);
 
-  /** 👇 UPDATED: ensure every marker has a valid `coords` (or skip it) */
   const markers: (MarkerWithPreview & { coords: LatLngLiteral })[] = useMemo(() => {
     const out: (MarkerWithPreview & { coords: LatLngLiteral })[] = [];
     for (const p of places) {
       const coords = coordsOf(p);
-      if (!coords) continue; // skip invalid items to prevent crashes
-let img = normalizeImageSrc(p.images as unknown[] | undefined, getImageSrc);
-if (!img && typeof (p as any).imageUrl === "string") img = (p as any).imageUrl;
+      if (!coords) continue;
+      const img = normalizeImageSrc(p.images as unknown[] | undefined, getImageSrc);
       out.push({ ...(p as any), coords, _preview: img });
     }
     return out;
@@ -173,7 +162,7 @@ if (!img && typeof (p as any).imageUrl === "string") img = (p as any).imageUrl;
           return (
             <Marker
               key={place.id}
-              position={place.coords} // ✅ now always defined
+              position={place.coords}
               icon={icon}
               eventHandlers={{
                 click: () => onPlaceClick?.(place),
@@ -182,9 +171,8 @@ if (!img && typeof (p as any).imageUrl === "string") img = (p as any).imageUrl;
               <Popup minWidth={280}>
                 <div className="space-y-2">
                   <div className="flex items-start justify-between gap-2">
-<h3 className="font-semibold leading-tight">
-  {(place as any).title ?? (place as any).name ?? "Untitled"}
-</h3>                    {place.distance !== undefined ? (
+                    <h3 className="font-semibold leading-tight">{place.title}</h3>
+                    {place.distance !== undefined ? (
                       <Badge variant="secondary" className="whitespace-nowrap">
                         {place.distance.toFixed(1)} km
                       </Badge>
@@ -196,7 +184,6 @@ if (!img && typeof (p as any).imageUrl === "string") img = (p as any).imageUrl;
                       src={place._preview}
                       alt={place.title}
                       className="h-28 w-full rounded object-cover"
-                      crossOrigin="anonymous"
                       draggable={false}
                     />
                   ) : (
