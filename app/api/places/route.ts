@@ -24,7 +24,7 @@ function requireEnv() {
   return { ok: true as const, REGION, BUCKET, PREFIX }
 }
 
-/** Helpers to read S3 body without Node Buffer */
+/** Minimal stream helpers (no Node Buffer) */
 function concatUint8Arrays(chunks: Uint8Array[]) {
   let len = 0
   for (const c of chunks) len += c.byteLength
@@ -63,16 +63,8 @@ const newId = () =>
   (globalThis as any).crypto?.randomUUID?.() || "id-" + Math.random().toString(36).slice(2, 10)
 
 function client(region: string) {
-  // forcePathStyle can help with buckets that contain dots.
-  return new S3Client({ region, forcePathStyle: true })
-}
-
-function formatErr(err: any) {
-  const name = err?.name || "Error"
-  const msg = err?.message || String(err)
-  const code = err?.$metadata?.httpStatusCode
-  const cause = err?.cause?.message || err?.originalError?.message
-  return `${name}${code ? ` (${code})` : ""}: ${msg}${cause ? ` | cause: ${cause}` : ""}`
+  // NOTE: Removed forcePathStyle to support ARN buckets / access points.
+  return new S3Client({ region })
 }
 
 // GET /api/places  -> list all place JSONs under prefix
@@ -93,11 +85,6 @@ export async function GET() {
       .map((o) => o.Key)
       .filter((k): k is string => !!k && k.endsWith(".json"))
 
-    if (!keys.length) {
-      // No places yet is a valid state.
-      return NextResponse.json([], { status: 200 })
-    }
-
     const places = await Promise.all(
       keys.map(async (Key) => {
         const obj = await s3.send(new GetObjectCommand({ Bucket: cfg.BUCKET, Key }))
@@ -108,21 +95,19 @@ export async function GET() {
 
     return NextResponse.json(places, { status: 200 })
   } catch (err: any) {
-    // Full details will go to Vercel logs to aid debugging.
-    console.error("GET /api/places failed:", {
-      err: {
-        name: err?.name,
-        message: err?.message,
-        code: err?.$metadata?.httpStatusCode,
-        cause: err?.cause?.message || err?.originalError?.message,
-        stack: err?.stack,
-      },
-      env: { region: cfg.REGION, bucket: cfg.BUCKET, prefix: cfg.PREFIX },
+    console.error("LIST places error:", {
+      name: err?.name,
+      message: err?.message,
+      code: err?.$metadata?.httpStatusCode,
+      region: cfg.REGION,
+      bucket: cfg.BUCKET,
+      prefix: cfg.PREFIX,
+      cause: err?.cause?.message || undefined,
     })
     return NextResponse.json(
       {
         error: "Failed to list places",
-        detail: formatErr(err),
+        detail: err?.name || err?.message || "UnknownError",
       },
       { status: 500 }
     )
@@ -164,15 +149,13 @@ export async function POST(req: Request) {
 
     return NextResponse.json(place, { status: 201 })
   } catch (err: any) {
-    console.error("POST /api/places failed:", {
+    console.error("CREATE place error:", {
       name: err?.name,
       message: err?.message,
       code: err?.$metadata?.httpStatusCode,
-      cause: err?.cause?.message || err?.originalError?.message,
-      stack: err?.stack,
     })
     return NextResponse.json(
-      { error: "Failed to create place", detail: formatErr(err) },
+      { error: "Failed to create place", detail: err?.name || err?.message || "UnknownError" },
       { status: 500 }
     )
   }
