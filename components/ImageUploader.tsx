@@ -29,7 +29,6 @@ type ImageUploaderProps = ValueMode | ImagesMode;
 
 // ---- helpers
 function getListFromProps(p: ImageUploaderProps): string[] {
-  // support both prop names
   return (p as any).images ?? (p as any).value ?? [];
 }
 function emitList(p: ImageUploaderProps, next: string[]) {
@@ -76,16 +75,32 @@ export default function ImageUploader(props: ImageUploaderProps) {
   const disabled = props.disabled ?? false;
   const folder = props.folder ?? "places";
 
+  const MAX_UPLOAD_BYTES = 25_000_000; // 25 MB
+
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0); // 0..100 across selected files
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files || []);
-    if (files.length === 0) return;
+    const picked = Array.from(event.target.files || []);
+    if (picked.length === 0) return;
+
+    // enforce 25 MB per file client-side
+    const tooBig = picked.filter((f) => f.size > MAX_UPLOAD_BYTES);
+    if (tooBig.length) {
+      alert(
+        `These files exceed the 25 MB limit and were skipped:\n` +
+          tooBig.map((f) => `• ${f.name} (${Math.round(f.size / 1_000_000)} MB)`).join("\n")
+      );
+    }
+    const okSize = picked.filter((f) => f.size <= MAX_UPLOAD_BYTES);
+    if (okSize.length === 0) {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
 
     const remainingSlots = Math.max(0, maxImages - images.length);
-    const filesToAdd = files.slice(0, remainingSlots);
+    const filesToAdd = okSize.slice(0, remainingSlots);
     if (filesToAdd.length === 0) {
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
@@ -106,7 +121,7 @@ export default function ImageUploader(props: ImageUploaderProps) {
         // 2) upload
         await uploadToS3(url, fields, f);
 
-        // 3) collect URL (this is what we store in Firestore)
+        // 3) collect URL
         newUrls.push(publicUrl);
 
         // progress (per-file granularity)
@@ -140,6 +155,7 @@ export default function ImageUploader(props: ImageUploaderProps) {
             ref={fileInputRef}
             type="file"
             accept="image/*"
+            capture="environment"      // opens camera on mobile
             multiple
             onChange={handleFileSelect}
             className="hidden"
@@ -164,6 +180,11 @@ export default function ImageUploader(props: ImageUploaderProps) {
               </>
             )}
           </Button>
+
+          {/* helper text */}
+          <p className="mt-2 text-xs text-muted-foreground">
+            You can take a photo on mobile or choose from your device. Max size <strong>25&nbsp;MB</strong> per file.
+          </p>
         </div>
       )}
 
