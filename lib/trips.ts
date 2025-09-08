@@ -72,14 +72,14 @@ type ApiTrip = Omit<Trip, "createdAt" | "updatedAt"> & {
 }
 
 function toApiPayload(trip: Trip): ApiTrip {
-  // Keep IDs stable by sending our client id as well.
-  // (If the API ignores it, publish still works; updates may create a second record — we can refine later.)
+  const { createdAt, updatedAt, ...rest } = trip as any
   return {
-    ...trip,
+    ...(rest as Omit<Trip, "createdAt" | "updatedAt">),
     createdAt: trip.createdAt?.getTime?.() ?? Date.now(),
     updatedAt: trip.updatedAt?.getTime?.() ?? Date.now(),
   }
 }
+
 
 async function apiPublishTrip(trip: Trip): Promise<void> {
   if (typeof fetch === "undefined") return
@@ -137,7 +137,7 @@ export const createTrip = async (
   const now = new Date()
   const newTrip: Trip = {
     ...tripData,
-    id: tripData.id || `trip-${Date.now()}`,
+    id: `trip-${Date.now()}`,
     createdAt: now,
     updatedAt: now,
   }
