@@ -38,11 +38,19 @@ export interface Trip {
 
 const STORAGE_KEY = "harii-timor-trips"
 
+// ---------- localStorage helpers (unchanged) ----------
 const getStoredTrips = (): Trip[] => {
   if (typeof window === "undefined") return []
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? JSON.parse(raw) : []
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as any[]
+    // revive Dates defensively
+    return parsed.map((t) => ({
+      ...t,
+      createdAt: new Date(t.createdAt),
+      updatedAt: new Date(t.updatedAt),
+    }))
   } catch {
     return []
   }
@@ -57,13 +65,89 @@ const setStoredTrips = (trips: Trip[]): void => {
   }
 }
 
+// ---------- API helpers (new) ----------
+type ApiTrip = Omit<Trip, "createdAt" | "updatedAt"> & {
+  createdAt: number
+  updatedAt: number
+}
+
+function toApiPayload(trip: Trip): ApiTrip {
+  // Keep IDs stable by sending our client id as well.
+  // (If the API ignores it, publish still works; updates may create a second record — we can refine later.)
+  return {
+    ...trip,
+    createdAt: trip.createdAt?.getTime?.() ?? Date.now(),
+    updatedAt: trip.updatedAt?.getTime?.() ?? Date.now(),
+  }
+}
+
+async function apiPublishTrip(trip: Trip): Promise<void> {
+  if (typeof fetch === "undefined") return
+  try {
+    const res = await fetch("/api/trips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(toApiPayload(trip)),
+    })
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "")
+      throw new Error(`POST /api/trips failed: ${res.status} ${txt}`)
+    }
+  } catch (e) {
+    console.warn("Publish trip failed (kept local only):", e)
+  }
+}
+
+async function apiUpdateTrip(trip: Trip): Promise<void> {
+  if (typeof fetch === "undefined") return
+  try {
+    const res = await fetch(`/api/trips/${encodeURIComponent(trip.id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(toApiPayload(trip)),
+    })
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "")
+      throw new Error(`PUT /api/trips/${trip.id} failed: ${res.status} ${txt}`)
+    }
+  } catch (e) {
+    console.warn("Update public trip failed (local still updated):", e)
+  }
+}
+
+async function apiDeleteTrip(id: string): Promise<void> {
+  if (typeof fetch === "undefined") return
+  try {
+    const res = await fetch(`/api/trips/${encodeURIComponent(id)}`, { method: "DELETE" })
+    // 404 is fine (e.g., never published)
+    if (!res.ok && res.status !== 404) {
+      const txt = await res.text().catch(() => "")
+      throw new Error(`DELETE /api/trips/${id} failed: ${res.status} ${txt}`)
+    }
+  } catch (e) {
+    console.warn("Delete public trip failed (local removed):", e)
+  }
+}
+
+// ---------- Public API you already use (now with server sync) ----------
 export const createTrip = async (
   tripData: Omit<Trip, "id" | "createdAt" | "updatedAt">
 ): Promise<{ id: string }> => {
   const trips = getStoredTrips()
   const now = new Date()
-  const newTrip: Trip = { ...tripData, id: `trip-${Date.now()}`, createdAt: now, updatedAt: now }
+  const newTrip: Trip = {
+    ...tripData,
+    id: tripData.id || `trip-${Date.now()}`,
+    createdAt: now,
+    updatedAt: now,
+  }
   setStoredTrips([...trips, newTrip])
+
+  // NEW: if user marked it public, also publish to server
+  if (newTrip.isPublic) {
+    await apiPublishTrip(newTrip)
+  }
+
   return { id: newTrip.id }
 }
 
@@ -73,11 +157,23 @@ export const updateTrip = async (tripId: string, updates: Partial<Trip>): Promis
     t.id === tripId ? { ...t, ...updates, updatedAt: new Date() } : t
   )
   setStoredTrips(updatedTrips)
+
+  // If the updated trip is public, sync the latest to server
+  const updated = updatedTrips.find((t) => t.id === tripId)
+  if (updated?.isPublic) {
+    await apiUpdateTrip(updated)
+  }
 }
 
 export const deleteTrip = async (tripId: string): Promise<void> => {
   const trips = getStoredTrips()
+  const trip = trips.find((t) => t.id === tripId)
   setStoredTrips(trips.filter((t) => t.id !== tripId))
+
+  // If it was public, try removing from server too (best effort)
+  if (trip?.isPublic) {
+    await apiDeleteTrip(tripId)
+  }
 }
 
 export const getTrip = async (tripId: string): Promise<Trip | null> => {
@@ -92,6 +188,8 @@ export const getUserTrips = async (userId: string): Promise<Trip[]> => {
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
 }
 
+// Kept for backwards-compat (local-only “public”)
+// Your /trips page now reads real public trips from /api/trips.
 export const getPublicTrips = async (): Promise<Trip[]> => {
   const trips = getStoredTrips()
   return trips
@@ -106,8 +204,6 @@ export const getAllTrips = async (): Promise<Trip[]> => {
 }
 
 // --- Distance / time helpers ---
-
-// Great-circle distance (km)
 export const calculateDistance = (
   from: { lat: number; lng: number },
   to: { lat: number; lng: number }
