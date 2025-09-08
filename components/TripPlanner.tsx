@@ -86,54 +86,77 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
   }, [])
 
   // category translation map
-  const categoryKeyMap: Record<
-    string,
-    | "category.history"
-    | "category.culture"
-    | "category.nature"
-    | "category.food"
-    | "category.memorials"
-  > = {
-    history: "category.history",
-    culture: "category.culture",
-    nature: "category.nature",
-    food: "category.food",
-    memorials: "category.memorials",
-  }
-  const safeCategoryKey = (cat: string):
-    | "category.history"
-    | "category.culture"
-    | "category.nature"
-    | "category.food"
-    | "category.memorials" => categoryKeyMap[cat] ?? "category.nature"
+const categoryKeyMap: Record<
+  string,
+  | "category.history"
+  | "category.culture"
+  | "category.nature"
+  | "category.food"
+  | "category.memorials"
+> = {
+  history: "category.history",
+  culture: "category.culture",
+  nature: "category.nature",
+  food: "category.food",
+  memorials: "category.memorials",
+};
 
-  const filteredPlaces = availablePlaces.filter((place) => {
-    const q = searchQuery.toLowerCase()
-    const matchesSearch =
-      place.title.toLowerCase().includes(q) ||
-      (place.municipality?.toLowerCase().includes(q) ?? false)
-    const matchesCategory = categoryFilter === "all" || place.category === categoryFilter
-    const notSelected = !selectedPlaces.some((tp) => tp.placeId === place.id)
-    return matchesSearch && matchesCategory && notSelected
-  })
+const safeCategoryKey = (
+  cat: string
+):
+  | "category.history"
+  | "category.culture"
+  | "category.nature"
+  | "category.food"
+  | "category.memorials" => categoryKeyMap[cat] ?? "category.nature";
 
-  const addPlace = (place: Place) => {
-    const newTripPlace: TripPlace = { placeId: place.id!, place, order: selectedPlaces.length, notes: "" }
-    setSelectedPlaces([...selectedPlaces, newTripPlace])
-  }
-  const removePlace = (placeId: string) => {
-    setSelectedPlaces(selectedPlaces.filter((tp) => tp.placeId !== placeId))
-  }
-  const updatePlaceNotes = (placeId: string, notes: string) => {
-    setSelectedPlaces(selectedPlaces.map((tp) => (tp.placeId === placeId ? { ...tp, notes } : tp)))
-  }
-  const handleDragEnd = (result: any) => {
-    if (!result.destination) return
-    const items = Array.from(selectedPlaces)
-    const [reorderedItem] = items.splice(result.source.index, 1)
-    items.splice(result.destination.index, 0, reorderedItem)
-    setSelectedPlaces(items.map((item, i) => ({ ...item, order: i })))
-  }
+const filteredPlaces = (availablePlaces ?? []).filter((place) => {
+  const q = (searchQuery ?? "").toString().trim().toLowerCase();
+
+  const title = (place.title ?? "").toString().toLowerCase();
+  const muni  = (place.municipality ?? "").toString().toLowerCase();
+
+  // if q is empty, treat as a match (i.e., no search filter)
+  const matchesSearch =
+    q === "" || title.includes(q) || muni.includes(q);
+
+  const catFilter = (categoryFilter ?? "all").toString();
+  const placeCat  = (place.category ?? "other").toString();
+
+  const matchesCategory = catFilter === "all" || placeCat === catFilter;
+
+  const notSelected = (selectedPlaces ?? []).every((tp) => tp.placeId !== place.id);
+
+  return matchesSearch && matchesCategory && notSelected;
+});
+
+const addPlace = (place: Place) => {
+  if (!place.id) return; // guard just in case
+  const newTripPlace: TripPlace = {
+    placeId: place.id,
+    place,
+    order: (selectedPlaces ?? []).length,
+    notes: "",
+  };
+  setSelectedPlaces([...(selectedPlaces ?? []), newTripPlace]);
+};
+
+const removePlace = (placeId: string) => {
+  setSelectedPlaces((selectedPlaces ?? []).filter((tp) => tp.placeId !== placeId));
+};
+
+const updatePlaceNotes = (placeId: string, notes: string) => {
+  setSelectedPlaces((selectedPlaces ?? []).map((tp) => (tp.placeId === placeId ? { ...tp, notes } : tp)));
+};
+
+const handleDragEnd = (result: any) => {
+  if (!result?.destination) return;
+  const items = Array.from(selectedPlaces ?? []);
+  const [reorderedItem] = items.splice(result.source.index, 1);
+  items.splice(result.destination.index, 0, reorderedItem);
+  setSelectedPlaces(items.map((item, i) => ({ ...item, order: i })));
+};
+
 
   // build a Trip-like object to compute stats
   const statsTrip: Trip | null =
