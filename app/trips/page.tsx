@@ -8,17 +8,30 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import TripCard from "@/components/TripCard";
 import {
-  getAllTrips,            // local saved trips (anonymous mode)
+  getAllTrips,
   deleteTrip as removeTrip,
   type Trip,
+  type TripPlace,
 } from "@/lib/trips";
 import { PlusCircle } from "lucide-react";
 
-// Shape returned by /api/trips (timestamps are numbers)
 type ApiTrip = Omit<Trip, "createdAt" | "updatedAt"> & {
   createdAt: number;
   updatedAt: number;
 };
+
+/** Coerce API payload -> Trip (Date fields revived) */
+function reviveApiTrip(t: ApiTrip): Trip {
+  return {
+    ...t,
+    createdAt: new Date(t.createdAt),
+    updatedAt: new Date(t.updatedAt),
+    // make sure places array exists & has minimal shape
+    places: Array.isArray(t.places)
+      ? (t.places as TripPlace[])
+      : [],
+  };
+}
 
 export default function TripsPage() {
   const router = useRouter();
@@ -30,7 +43,7 @@ export default function TripsPage() {
   const loadSaved = useCallback(async () => {
     setLoadingSaved(true);
     try {
-      const mine = await getAllTrips(); // local saved trips
+      const mine = await getAllTrips(); // local saved trips (anonymous mode)
       setSavedTrips(mine);
     } finally {
       setLoadingSaved(false);
@@ -41,22 +54,12 @@ export default function TripsPage() {
     setLoadingPublic(true);
     try {
       const res = await fetch("/api/trips", { cache: "no-store" });
-      if (!res.ok) throw new Error(`GET /api/trips failed: ${res.status}`);
-      const data: ApiTrip[] = await res.json();
-
-      // Coerce numeric timestamps -> Date to match Trip type
-      const normalized: Trip[] = data
-        .map((t) => ({
-          ...t,
-          createdAt: new Date(t.createdAt),
-          updatedAt: new Date(t.updatedAt),
-        }))
-        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-
-      setPublicTrips(normalized);
+      if (!res.ok) throw new Error(`GET /api/trips ${res.status}`);
+      const data = (await res.json()) as ApiTrip[];
+      setPublicTrips(data.map(reviveApiTrip));
     } catch (err) {
-      console.error("Failed to load public trips from API:", err);
-      setPublicTrips([]); // graceful fallback
+      console.error("Failed to load public trips:", err);
+      setPublicTrips([]);
     } finally {
       setLoadingPublic(false);
     }
@@ -130,7 +133,7 @@ export default function TripsPage() {
         )}
       </section>
 
-      {/* Public Trips (from API) */}
+      {/* Public Trips (from server API) */}
       <section className="space-y-4">
         <h2 className="text-xl font-semibold">Public Trips</h2>
         {loadingPublic ? (
