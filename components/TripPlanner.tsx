@@ -25,7 +25,28 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd"
-import { Plus, X, MapPin, Clock, Route, Save, GripVertical, AlertCircle, Calendar, Car, Pin } from "lucide-react"
+import { Plus, X, MapPin, Clock, Route, Save, GripVertical, AlertCircle, Calendar, Car, Pin, Search } from "lucide-react"
+
+// --- Map picker (react-leaflet) ---
+import "leaflet/dist/leaflet.css"
+import { MapContainer, TileLayer, Marker, useMapEvents } from "react-leaflet"
+import L, { LatLngLiteral, Icon } from "leaflet"
+
+// Leaflet default icon fix (same as MapView)
+import marker2x from "leaflet/dist/images/marker-icon-2x.png"
+import markerIcon from "leaflet/dist/images/marker-icon.png"
+import markerShadow from "leaflet/dist/images/marker-shadow.png"
+
+const DefaultIcon: Icon = L.icon({
+  iconUrl: (markerIcon as unknown as { src?: string }).src ?? (markerIcon as unknown as string),
+  iconRetinaUrl: (marker2x as unknown as { src?: string }).src ?? (marker2x as unknown as string),
+  shadowUrl: (markerShadow as unknown as { src?: string }).src ?? (markerShadow as unknown as string),
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowSize: [41, 41],
+})
+L.Marker.prototype.options.icon = DefaultIcon
 
 interface TripPlannerProps {
   trip?: Trip
@@ -38,6 +59,16 @@ const START_PRESETS = {
   dili: { label: "Dili (default)", coords: { lat: -8.5586, lng: 125.5736 } },
   none: { label: "No explicit start (begin at first stop)", coords: null as any },
 } as const
+
+// Small helper component to capture map clicks
+function MapClickCapture({ onPick }: { onPick: (latlng: LatLngLiteral) => void }) {
+  useMapEvents({
+    click(e) {
+      onPick({ lat: e.latlng.lat, lng: e.latlng.lng })
+    },
+  })
+  return null
+}
 
 export default function TripPlanner({ trip, language = "en", onSave, onCancel }: TripPlannerProps) {
   const { t } = useTranslation()
@@ -74,6 +105,21 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
   const [searchQuery, setSearchQuery] = useState("")
   const [categoryFilter, setCategoryFilter] = useState<string>("all")
 
+  // New: sub-tabs for "Select Places"
+  const [selectTab, setSelectTab] = useState<"list" | "area" | "map">("list")
+
+  // Area search (Nominatim)
+  const [areaQuery, setAreaQuery] = useState("")
+  const [areaLoading, setAreaLoading] = useState(false)
+  const [areaResults, setAreaResults] = useState<
+    { display_name: string; lat: string; lon: string }[]
+  >([])
+  const [areaErr, setAreaErr] = useState<string | null>(null)
+
+  // Map-pick pending point
+  const [pendingPoint, setPendingPoint] = useState<LatLngLiteral | null>(null)
+  const [customStopName, setCustomStopName] = useState("")
+
   useEffect(() => {
     ;(async () => {
       try {
@@ -86,77 +132,134 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
   }, [])
 
   // category translation map
-const categoryKeyMap: Record<
-  string,
-  | "category.history"
-  | "category.culture"
-  | "category.nature"
-  | "category.food"
-  | "category.memorials"
-> = {
-  history: "category.history",
-  culture: "category.culture",
-  nature: "category.nature",
-  food: "category.food",
-  memorials: "category.memorials",
-};
+  const categoryKeyMap: Record<
+    string,
+    | "category.history"
+    | "category.culture"
+    | "category.nature"
+    | "category.food"
+    | "category.memorials"
+  > = {
+    history: "category.history",
+    culture: "category.culture",
+    nature: "category.nature",
+    food: "category.food",
+    memorials: "category.memorials",
+  }
 
-const safeCategoryKey = (
-  cat: string
-):
-  | "category.history"
-  | "category.culture"
-  | "category.nature"
-  | "category.food"
-  | "category.memorials" => categoryKeyMap[cat] ?? "category.nature";
+  const safeCategoryKey = (
+    cat: string
+  ):
+    | "category.history"
+    | "category.culture"
+    | "category.nature"
+    | "category.food"
+    | "category.memorials" => categoryKeyMap[cat] ?? "category.nature"
 
-const filteredPlaces = (availablePlaces ?? []).filter((place) => {
-  const q = (searchQuery ?? "").toString().trim().toLowerCase();
+  const filteredPlaces = (availablePlaces ?? []).filter((place) => {
+    const q = (searchQuery ?? "").toString().trim().toLowerCase()
 
-  const title = (place.title ?? "").toString().toLowerCase();
-  const muni  = (place.municipality ?? "").toString().toLowerCase();
+    const title = (place.title ?? "").toString().toLowerCase()
+    const muni = (place.municipality ?? "").toString().toLowerCase()
 
-  // if q is empty, treat as a match (i.e., no search filter)
-  const matchesSearch =
-    q === "" || title.includes(q) || muni.includes(q);
+    const matchesSearch = q === "" || title.includes(q) || muni.includes(q)
 
-  const catFilter = (categoryFilter ?? "all").toString();
-  const placeCat  = (place.category ?? "other").toString();
+    const catFilter = (categoryFilter ?? "all").toString()
+    const placeCat = (place.category ?? "other").toString()
 
-  const matchesCategory = catFilter === "all" || placeCat === catFilter;
+    const matchesCategory = catFilter === "all" || placeCat === catFilter
 
-  const notSelected = (selectedPlaces ?? []).every((tp) => tp.placeId !== place.id);
+    const notSelected = (selectedPlaces ?? []).every((tp) => tp.placeId !== place.id)
 
-  return matchesSearch && matchesCategory && notSelected;
-});
+    return matchesSearch && matchesCategory && notSelected
+  })
 
-const addPlace = (place: Place) => {
-  if (!place.id) return; // guard just in case
-  const newTripPlace: TripPlace = {
-    placeId: place.id,
-    place,
-    order: (selectedPlaces ?? []).length,
-    notes: "",
-  };
-  setSelectedPlaces([...(selectedPlaces ?? []), newTripPlace]);
-};
+  const addPlace = (place: Place) => {
+    if (!place.id) return
+    const newTripPlace: TripPlace = {
+      placeId: place.id,
+      place,
+      order: (selectedPlaces ?? []).length,
+      notes: "",
+    }
+    setSelectedPlaces([...(selectedPlaces ?? []), newTripPlace])
+  }
 
-const removePlace = (placeId: string) => {
-  setSelectedPlaces((selectedPlaces ?? []).filter((tp) => tp.placeId !== placeId));
-};
+  const removePlace = (placeId: string) => {
+    setSelectedPlaces((selectedPlaces ?? []).filter((tp) => tp.placeId !== placeId))
+  }
 
-const updatePlaceNotes = (placeId: string, notes: string) => {
-  setSelectedPlaces((selectedPlaces ?? []).map((tp) => (tp.placeId === placeId ? { ...tp, notes } : tp)));
-};
+  const updatePlaceNotes = (placeId: string, notes: string) => {
+    setSelectedPlaces((selectedPlaces ?? []).map((tp) => (tp.placeId === placeId ? { ...tp, notes } : tp)))
+  }
 
-const handleDragEnd = (result: any) => {
-  if (!result?.destination) return;
-  const items = Array.from(selectedPlaces ?? []);
-  const [reorderedItem] = items.splice(result.source.index, 1);
-  items.splice(result.destination.index, 0, reorderedItem);
-  setSelectedPlaces(items.map((item, i) => ({ ...item, order: i })));
-};
+  const handleDragEnd = (result: any) => {
+    if (!result?.destination) return
+    const items = Array.from(selectedPlaces ?? [])
+    const [reorderedItem] = items.splice(result.source.index, 1)
+    items.splice(result.destination.index, 0, reorderedItem)
+    setSelectedPlaces(items.map((item, i) => ({ ...item, order: i })))
+  }
 
+  // Add a custom stop from coords (+ optional name)
+  const addCustomStop = (coords: LatLngLiteral, name?: string) => {
+    const title =
+      (name ?? "").trim() ||
+      `Custom Stop (${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)})`
+
+    const customPlace: Place = {
+      // Minimal viable Place for trip use
+      id: `custom-${Date.now()}`,
+      title,
+      description: "",
+      category: "other" as any,
+      municipality: "",
+      suco: "",
+      coords: { lat: coords.lat, lng: coords.lng },
+      images: [],
+      sources: [],
+      languages: [],
+      period: {},
+      ownerId: "anonymous",
+      status: "published",
+      featured: false,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }
+
+    addPlace(customPlace)
+  }
+
+  // Area search via Nominatim (client-side)
+  const handleAreaSearch = async () => {
+    const q = areaQuery.trim()
+    if (!q) {
+      setAreaResults([])
+      setAreaErr(null)
+      return
+    }
+    setAreaLoading(true)
+    setAreaErr(null)
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=8&q=${encodeURIComponent(
+        q
+      )}`
+      const res = await fetch(url, {
+        headers: {
+          // Some Nominatim instances rate-limit; Referer header is automatically set by browser
+          // We can't set User-Agent in browser; this is fine for light usage.
+        },
+      })
+      if (!res.ok) throw new Error(`Search failed ${res.status}`)
+      const data = (await res.json()) as { display_name: string; lat: string; lon: string }[]
+      setAreaResults(data)
+    } catch (e: any) {
+      setAreaErr(e?.message || "Search failed")
+      setAreaResults([])
+    } finally {
+      setAreaLoading(false)
+    }
+  }
 
   // build a Trip-like object to compute stats
   const statsTrip: Trip | null =
@@ -299,6 +402,7 @@ const handleDragEnd = (result: any) => {
                 <SelectContent>
                   <SelectItem value="car">Car</SelectItem>
                   <SelectItem value="motorbike">Motorbike</SelectItem>
+                  <SelectItem value="scooter">Scooter</SelectItem>{/* NEW */}
                   <SelectItem value="bus">Bus/Minibus</SelectItem>
                   <SelectItem value="bicycle">Bicycle</SelectItem>
                   <SelectItem value="walking">Walking</SelectItem>
@@ -389,52 +493,173 @@ const handleDragEnd = (result: any) => {
         </TabsList>
 
         <TabsContent value="places" className="space-y-4">
-          <Card>
-            <CardHeader><CardTitle>Available Places</CardTitle></CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex gap-4">
-                <Input className="flex-1" placeholder="Search places..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-                <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                  <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {[
-                      { value: "all", label: "All Categories" },
-                      { value: "history", label: t("category.history") },
-                      { value: "culture", label: t("category.culture") },
-                      { value: "nature", label: t("category.nature") },
-                      { value: "food", label: t("category.food") },
-                      { value: "memorials", label: t("category.memorials") },
-                    ].map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
+          {/* Sub-tabs for selection modes */}
+          <Tabs value={selectTab} onValueChange={(v) => setSelectTab(v as any)}>
+            <TabsList className="grid w-full grid-cols-3">
+              <TabsTrigger value="list">Browse List</TabsTrigger>
+              <TabsTrigger value="area">Search Area</TabsTrigger>
+              <TabsTrigger value="map">Pick on Map</TabsTrigger>
+            </TabsList>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-96 overflow-y-auto">
-                {filteredPlaces.map((place) => (
-                  <Card key={place.id} className="cursor-pointer hover:shadow-md transition-shadow">
-                    <CardContent className="p-4">
-                      <div className="flex justify-between items-start mb-2">
-                        <h3 className="font-medium text-sm">{place.title}</h3>
-                        <Button size="sm" variant="outline" onClick={() => addPlace(place)}><Plus className="h-3 w-3" /></Button>
-                      </div>
-                      <p className="text-xs text-muted-foreground mb-2 line-clamp-2">{place.description}</p>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="secondary" className="text-xs">{t(safeCategoryKey(place.category))}</Badge>
-                        <span className="text-xs text-muted-foreground flex items-center"><MapPin className="h-3 w-3 mr-1" />{place.municipality ?? "Unknown"}</span>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
+            {/* List mode (existing) */}
+            <TabsContent value="list" className="space-y-4">
+              <Card>
+                <CardHeader><CardTitle>Available Places</CardTitle></CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex gap-4">
+                    <Input className="flex-1" placeholder="Search places..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+                    <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                      <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {[
+                          { value: "all", label: "All Categories" },
+                          { value: "history", label: t("category.history") },
+                          { value: "culture", label: t("category.culture") },
+                          { value: "nature", label: t("category.nature") },
+                          { value: "food", label: t("category.food") },
+                          { value: "memorials", label: t("category.memorials") },
+                        ].map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-              {filteredPlaces.length === 0 && (
-                <div className="text-center py-8 text-muted-foreground">
-                  <MapPin className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>No places found matching your criteria</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-96 overflow-y-auto">
+                    {filteredPlaces.map((place) => (
+                      <Card key={place.id} className="cursor-pointer hover:shadow-md transition-shadow">
+                        <CardContent className="p-4">
+                          <div className="flex justify-between items-start mb-2">
+                            <h3 className="font-medium text-sm">{place.title}</h3>
+                            <Button size="sm" variant="outline" onClick={() => addPlace(place)}><Plus className="h-3 w-3" /></Button>
+                          </div>
+                          <p className="text-xs text-muted-foreground mb-2 line-clamp-2">{place.description}</p>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="secondary" className="text-xs">{t(safeCategoryKey(place.category))}</Badge>
+                            <span className="text-xs text-muted-foreground flex items-center"><MapPin className="h-3 w-3 mr-1" />{place.municipality ?? "Unknown"}</span>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+
+                  {filteredPlaces.length === 0 && (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <MapPin className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                      <p>No places found matching your criteria</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Area search (Nominatim) */}
+            <TabsContent value="area" className="space-y-4">
+              <Card>
+                <CardHeader><CardTitle>Search an Area</CardTitle></CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        className="pl-9"
+                        placeholder="e.g., Maubisse, Baucau, beach near Dili…"
+                        value={areaQuery}
+                        onChange={(e) => setAreaQuery(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && handleAreaSearch()}
+                      />
+                    </div>
+                    <Button onClick={handleAreaSearch} disabled={areaLoading}>
+                      {areaLoading ? "Searching…" : "Search"}
+                    </Button>
+                  </div>
+
+                  {areaErr ? (
+                    <p className="text-sm text-destructive">{areaErr}</p>
+                  ) : null}
+
+                  <div className="grid gap-3">
+                    {areaResults.map((r, idx) => {
+                      const lat = parseFloat(r.lat)
+                      const lng = parseFloat(r.lon)
+                      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+                      return (
+                        <Card key={idx}>
+                          <CardContent className="p-3 flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-medium">{r.display_name}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {lat.toFixed(4)}, {lng.toFixed(4)}
+                              </p>
+                            </div>
+                            <Button size="sm" onClick={() => addCustomStop({ lat, lng }, r.display_name)}>Add</Button>
+                          </CardContent>
+                        </Card>
+                      )
+                    })}
+                    {(!areaLoading && areaResults.length === 0 && areaQuery.trim() !== "") && (
+                      <p className="text-sm text-muted-foreground">No results.</p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Map pick */}
+            <TabsContent value="map" className="space-y-4">
+              <Card>
+                <CardHeader><CardTitle>Pick on Map</CardTitle></CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="h-[360px] rounded overflow-hidden">
+                    <MapContainer
+                      center={{ lat: -8.5586, lng: 125.5736 }}
+                      zoom={8}
+                      className="h-full w-full"
+                      attributionControl={false}
+                      zoomControl={true}
+                    >
+                      <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                      <MapClickCapture onPick={(ll) => {
+                        setPendingPoint(ll)
+                        setCustomStopName("")
+                      }} />
+                      {pendingPoint && <Marker position={pendingPoint} />}
+                    </MapContainer>
+                  </div>
+
+                  {pendingPoint && (
+                    <div className="grid gap-3 md:grid-cols-3 items-end">
+                      <div className="md:col-span-2">
+                        <Label htmlFor="customStopName">Name/Label</Label>
+                        <Input
+                          id="customStopName"
+                          placeholder="e.g., Scenic lookout"
+                          value={customStopName}
+                          onChange={(e) => setCustomStopName(e.target.value)}
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {pendingPoint.lat.toFixed(4)}, {pendingPoint.lng.toFixed(4)}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          className="flex-1"
+                          onClick={() => {
+                            addCustomStop(pendingPoint, customStopName)
+                            setPendingPoint(null)
+                            setCustomStopName("")
+                          }}
+                        >
+                          Add Stop
+                        </Button>
+                        <Button variant="outline" onClick={() => { setPendingPoint(null); setCustomStopName("") }}>
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
         </TabsContent>
 
         <TabsContent value="itinerary" className="space-y-4">
