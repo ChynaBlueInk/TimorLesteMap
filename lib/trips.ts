@@ -8,7 +8,14 @@ export interface TripPlace {
   notes?: string
 }
 
-export type TransportMode = "car" | "motorbike" | "bus" | "bicycle" | "walking"
+export type TransportMode =
+  | "car"
+  | "motorbike"
+  | "scooter"    // NEW: scooter
+  | "bus"
+  | "bicycle"
+  | "walking"
+
 export type RoadCondition = "sealed" | "mixed" | "rough"
 export type StartKey = "dili" | "none"
 
@@ -38,9 +45,7 @@ export interface Trip {
 
 const STORAGE_KEY = "harii-timor-trips"
 
-/* -------------------------------------------
- * localStorage helpers
- * -----------------------------------------*/
+// ---------- localStorage helpers (unchanged) ----------
 const getStoredTrips = (): Trip[] => {
   if (typeof window === "undefined") return []
   try {
@@ -67,9 +72,7 @@ const setStoredTrips = (trips: Trip[]): void => {
   }
 }
 
-/* -------------------------------------------
- * API helpers (server /api/trips)
- * -----------------------------------------*/
+// ---------- API helpers (new) ----------
 type ApiTrip = Omit<Trip, "createdAt" | "updatedAt"> & {
   createdAt: number
   updatedAt: number
@@ -132,9 +135,7 @@ async function apiDeleteTrip(id: string): Promise<void> {
   }
 }
 
-/* -------------------------------------------
- * Public functions (with server sync)
- * -----------------------------------------*/
+// ---------- Public API you already use (now with server sync) ----------
 export const createTrip = async (
   tripData: Omit<Trip, "id" | "createdAt" | "updatedAt">
 ): Promise<{ id: string }> => {
@@ -148,7 +149,7 @@ export const createTrip = async (
   }
   setStoredTrips([...trips, newTrip])
 
-  // If user marked it public, also publish to server
+  // if user marked it public, also publish to server
   if (newTrip.isPublic) {
     await apiPublishTrip(newTrip)
   }
@@ -158,53 +159,26 @@ export const createTrip = async (
 
 export const updateTrip = async (tripId: string, updates: Partial<Trip>): Promise<void> => {
   const trips = getStoredTrips()
-
-  // previous state (to detect public/private transitions)
-  const prev = trips.find((t) => t.id === tripId) || null
-
-  // write local first
-  const nextTrips = trips.map((t) =>
+  const updatedTrips = trips.map((t) =>
     t.id === tripId ? { ...t, ...updates, updatedAt: new Date() } : t
   )
-  setStoredTrips(nextTrips)
+  setStoredTrips(updatedTrips)
 
-  // new state after update
-  const updated = nextTrips.find((t) => t.id === tripId) || null
-  if (!updated) return
-
-  // ---- server sync rules ----
-  // private -> public  : publish (POST)
-  // public  -> public  : update  (PUT)
-  // public  -> private : unpublish (DELETE)
-  // private -> private : no-op
-  try {
-    if (updated.isPublic && !prev?.isPublic) {
-      await apiPublishTrip(updated)
-    } else if (updated.isPublic && prev?.isPublic) {
-      await apiUpdateTrip(updated)
-    } else if (!updated.isPublic && prev?.isPublic) {
-      await apiDeleteTrip(updated.id)
-    }
-  } catch (e) {
-    // Don’t block the UI; local copy is already updated.
-    console.warn("Trip server sync after update failed:", e)
+  // If the updated trip is public, sync the latest to server
+  const updated = updatedTrips.find((t) => t.id === tripId)
+  if (updated?.isPublic) {
+    await apiUpdateTrip(updated)
   }
 }
 
 export const deleteTrip = async (tripId: string): Promise<void> => {
   const trips = getStoredTrips()
-  const toDelete = trips.find((t) => t.id === tripId) || null
-
-  // remove local first
+  const trip = trips.find((t) => t.id === tripId)
   setStoredTrips(trips.filter((t) => t.id !== tripId))
 
-  // best-effort server delete if it was public
-  if (toDelete?.isPublic) {
-    try {
-      await apiDeleteTrip(tripId)
-    } catch (e) {
-      console.warn("Delete public trip failed (local removed):", e)
-    }
+  // If it was public, try removing from server too (best effort)
+  if (trip?.isPublic) {
+    await apiDeleteTrip(tripId)
   }
 }
 
@@ -220,8 +194,7 @@ export const getUserTrips = async (userId: string): Promise<Trip[]> => {
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
 }
 
-// NOTE: This still reads “public” from local storage (back-compat).
-// Your /trips page can fetch real public trips from /api/trips for global visibility.
+// Kept for backwards-compat (local-only “public”)
 export const getPublicTrips = async (): Promise<Trip[]> => {
   const trips = getStoredTrips()
   return trips
@@ -229,14 +202,14 @@ export const getPublicTrips = async (): Promise<Trip[]> => {
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
 }
 
+// NEW: simple helper to list all trips (for anonymous/open mode)
 export const getAllTrips = async (): Promise<Trip[]> => {
   const trips = getStoredTrips()
   return trips.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
 }
 
-/* -------------------------------------------
- * Distance / time helpers
- * -----------------------------------------*/
+// --- Distance / time helpers ---
+
 // Great-circle distance (km)
 export const calculateDistance = (
   from: { lat: number; lng: number },
@@ -257,6 +230,7 @@ export const calculateDistance = (
 const MODE_BASE_SPEED: Record<TransportMode, number> = {
   car: 45,
   motorbike: 40,
+  scooter: 38,   // NEW: scooter (slightly slower than motorbike)
   bus: 35,
   bicycle: 14,
   walking: 4.5,
