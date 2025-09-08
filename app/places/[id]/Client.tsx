@@ -113,12 +113,12 @@ export default function PlaceDetailClient({ id }: { id: string }) {
                       <CardContent className="p-2">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
-                          src={src}
-                          alt={`${place.title} image ${i + 1}`}
-                          className="h-64 w-full rounded object-cover md:h-80"
-                          crossOrigin="anonymous"
-                          draggable={false}
-                        />
+  src={src}
+  alt={`${place.title} image ${i + 1}`}
+  className="h-[320px] w-full rounded-md object-cover"
+  draggable={false}
+  loading="lazy"
+/>
                       </CardContent>
                     </Card>
                   ))}

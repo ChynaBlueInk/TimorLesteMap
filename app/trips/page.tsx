@@ -11,27 +11,8 @@ import {
   getAllTrips,
   deleteTrip as removeTrip,
   type Trip,
-  type TripPlace,
 } from "@/lib/trips";
 import { PlusCircle } from "lucide-react";
-
-type ApiTrip = Omit<Trip, "createdAt" | "updatedAt"> & {
-  createdAt: number;
-  updatedAt: number;
-};
-
-/** Coerce API payload -> Trip (Date fields revived) */
-function reviveApiTrip(t: ApiTrip): Trip {
-  return {
-    ...t,
-    createdAt: new Date(t.createdAt),
-    updatedAt: new Date(t.updatedAt),
-    // make sure places array exists & has minimal shape
-    places: Array.isArray(t.places)
-      ? (t.places as TripPlace[])
-      : [],
-  };
-}
 
 export default function TripsPage() {
   const router = useRouter();
@@ -43,7 +24,7 @@ export default function TripsPage() {
   const loadSaved = useCallback(async () => {
     setLoadingSaved(true);
     try {
-      const mine = await getAllTrips(); // local saved trips (anonymous mode)
+      const mine = await getAllTrips(); // local saved trips
       setSavedTrips(mine);
     } finally {
       setLoadingSaved(false);
@@ -54,11 +35,14 @@ export default function TripsPage() {
     setLoadingPublic(true);
     try {
       const res = await fetch("/api/trips", { cache: "no-store" });
-      if (!res.ok) throw new Error(`GET /api/trips ${res.status}`);
-      const data = (await res.json()) as ApiTrip[];
-      setPublicTrips(data.map(reviveApiTrip));
-    } catch (err) {
-      console.error("Failed to load public trips:", err);
+      const list = (await res.json()) as any[];
+      const revived: Trip[] = list.map((t) => ({
+        ...t,
+        createdAt: new Date(t.createdAt),
+        updatedAt: new Date(t.updatedAt),
+      }));
+      setPublicTrips(revived);
+    } catch {
       setPublicTrips([]);
     } finally {
       setLoadingPublic(false);
@@ -66,7 +50,6 @@ export default function TripsPage() {
   }, []);
 
   useEffect(() => {
-    // Load both sections
     loadSaved();
     loadPublic();
   }, [loadSaved, loadPublic]);
@@ -78,8 +61,7 @@ export default function TripsPage() {
   const handleDelete = async (trip: Trip) => {
     const ok = window.confirm(`Delete trip "${trip.name}"? This cannot be undone.`);
     if (!ok) return;
-    await removeTrip(trip.id);
-    // Refresh both sections (in case a deleted public trip was also saved locally)
+    await removeTrip(trip.id); // removes local; if public, also DELETEs server
     await Promise.all([loadSaved(), loadPublic()]);
   };
 
@@ -133,7 +115,7 @@ export default function TripsPage() {
         )}
       </section>
 
-      {/* Public Trips (from server API) */}
+      {/* Public Trips */}
       <section className="space-y-4">
         <h2 className="text-xl font-semibold">Public Trips</h2>
         {loadingPublic ? (
