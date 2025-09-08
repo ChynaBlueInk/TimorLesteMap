@@ -8,12 +8,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import TripCard from "@/components/TripCard";
 import {
-  getAllTrips,
-  getPublicTrips,
+  getAllTrips,            // local saved trips (anonymous mode)
   deleteTrip as removeTrip,
   type Trip,
 } from "@/lib/trips";
 import { PlusCircle } from "lucide-react";
+
+// Shape returned by /api/trips (timestamps are numbers)
+type ApiTrip = Omit<Trip, "createdAt" | "updatedAt"> & {
+  createdAt: number;
+  updatedAt: number;
+};
 
 export default function TripsPage() {
   const router = useRouter();
@@ -25,7 +30,7 @@ export default function TripsPage() {
   const loadSaved = useCallback(async () => {
     setLoadingSaved(true);
     try {
-      const mine = await getAllTrips(); // local saved trips (anonymous mode)
+      const mine = await getAllTrips(); // local saved trips
       setSavedTrips(mine);
     } finally {
       setLoadingSaved(false);
@@ -35,8 +40,23 @@ export default function TripsPage() {
   const loadPublic = useCallback(async () => {
     setLoadingPublic(true);
     try {
-      const pub = await getPublicTrips();
-      setPublicTrips(pub);
+      const res = await fetch("/api/trips", { cache: "no-store" });
+      if (!res.ok) throw new Error(`GET /api/trips failed: ${res.status}`);
+      const data: ApiTrip[] = await res.json();
+
+      // Coerce numeric timestamps -> Date to match Trip type
+      const normalized: Trip[] = data
+        .map((t) => ({
+          ...t,
+          createdAt: new Date(t.createdAt),
+          updatedAt: new Date(t.updatedAt),
+        }))
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+
+      setPublicTrips(normalized);
+    } catch (err) {
+      console.error("Failed to load public trips from API:", err);
+      setPublicTrips([]); // graceful fallback
     } finally {
       setLoadingPublic(false);
     }
@@ -110,7 +130,7 @@ export default function TripsPage() {
         )}
       </section>
 
-      {/* Public Trips */}
+      {/* Public Trips (from API) */}
       <section className="space-y-4">
         <h2 className="text-xl font-semibold">Public Trips</h2>
         {loadingPublic ? (
