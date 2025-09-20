@@ -25,7 +25,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd"
-import { Plus, X, MapPin, Clock, Route, Save, GripVertical, AlertCircle, Calendar, Car, Pin, Search } from "lucide-react"
+import { Plus, X, MapPin, Clock, Route, Save, GripVertical, AlertCircle, Calendar, Car, Pin, Search, Pencil } from "lucide-react"
 
 // --- Map picker (react-leaflet) ---
 import "leaflet/dist/leaflet.css"
@@ -119,6 +119,107 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
   // Map-pick pending point
   const [pendingPoint, setPendingPoint] = useState<LatLngLiteral | null>(null)
   const [customStopName, setCustomStopName] = useState("")
+// ---- Stop Editor State / Helpers ----
+type StopEditorState = {
+  index: number
+  placeId: string
+  isCustom: boolean
+  title: string
+  lat?: string
+  lng?: string
+  notes: string
+  replaceSearch: string
+  replaceSelectedPlaceId?: string
+} | null
+
+const [stopEditor, setStopEditor] = useState<StopEditorState>(null)
+
+const openStopEditor = (index: number) => {
+  const tp = selectedPlaces[index]
+  const isCustom = tp.place.id?.startsWith("custom-") ?? false
+  setStopEditor({
+    index,
+    placeId: tp.placeId,
+    isCustom,
+    title: tp.place.title ?? "",
+    lat: isCustom ? String(tp.place.coords?.lat ?? "") : undefined,
+    lng: isCustom ? String(tp.place.coords?.lng ?? "") : undefined,
+    notes: tp.notes ?? "",
+    replaceSearch: "",
+    replaceSelectedPlaceId: undefined,
+  })
+}
+
+const closeStopEditor = () => setStopEditor(null)
+
+// REPLACE your applyStopEdit with this async version
+const applyStopEdit = async () => {
+  if (!stopEditor) return
+  const { index, isCustom, title, lat, lng, notes, replaceSelectedPlaceId } = stopEditor
+
+  // Build the next places array from current state
+  const next = (() => {
+    const copy = [...selectedPlaces]
+    const current = copy[index]
+    if (!current) return selectedPlaces
+
+    if (replaceSelectedPlaceId) {
+      // Replace with another existing Place
+      const newPlace = availablePlaces.find((p) => p.id === replaceSelectedPlaceId)
+      if (newPlace) {
+        copy[index] = {
+          ...current,
+          placeId: newPlace.id as string,
+          place: newPlace,
+        }
+      }
+    } else if (isCustom) {
+      // Edit a custom pin's title/coords
+      const latNum =
+        lat && lat.trim() !== "" && !Number.isNaN(Number(lat)) ? Number(lat) : current.place.coords?.lat
+      const lngNum =
+        lng && lng.trim() !== "" && !Number.isNaN(Number(lng)) ? Number(lng) : current.place.coords?.lng
+      copy[index] = {
+        ...current,
+        place: {
+          ...current.place,
+          title: title || current.place.title,
+          coords: { lat: latNum as number, lng: lngNum as number },
+          updatedAt: Date.now(),
+        },
+      }
+    }
+
+    // Always update notes
+    copy[index] = { ...copy[index], notes }
+    // Normalize order just in case
+    return copy.map((p, i) => ({ ...p, order: i }))
+  })()
+
+  // Optimistic UI
+  setSelectedPlaces(next)
+
+  // Persist if editing an existing trip
+  if (trip?.id) {
+    try {
+      await updateTrip(trip.id, { places: next })
+    } catch (e) {
+      // optional: surface error UI
+      console.error("Failed to persist stop edit", e)
+    }
+  }
+
+  closeStopEditor()
+}
+
+const replaceCandidates = useMemo(() => {
+  if (!stopEditor) return []
+  const q = stopEditor.replaceSearch.trim().toLowerCase()
+  return (availablePlaces ?? [])
+    .filter((p) => p.id !== stopEditor.placeId) // exclude current
+    .filter((p) => !q || (p.title ?? "").toLowerCase().includes(q) || (p.municipality ?? "").toLowerCase().includes(q))
+    .slice(0, 12)
+}, [stopEditor, availablePlaces])
 
   useEffect(() => {
     ;(async () => {
@@ -184,22 +285,50 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
     }
     setSelectedPlaces([...(selectedPlaces ?? []), newTripPlace])
   }
-
-  const removePlace = (placeId: string) => {
-    setSelectedPlaces((selectedPlaces ?? []).filter((tp) => tp.placeId !== placeId))
-  }
-
   const updatePlaceNotes = (placeId: string, notes: string) => {
-    setSelectedPlaces((selectedPlaces ?? []).map((tp) => (tp.placeId === placeId ? { ...tp, notes } : tp)))
-  }
+  setSelectedPlaces((prev) =>
+    (prev ?? []).map((tp) => (tp.placeId === placeId ? { ...tp, notes } : tp))
+  )
+}
 
-  const handleDragEnd = (result: any) => {
-    if (!result?.destination) return
-    const items = Array.from(selectedPlaces ?? [])
-    const [reorderedItem] = items.splice(result.source.index, 1)
-    items.splice(result.destination.index, 0, reorderedItem)
-    setSelectedPlaces(items.map((item, i) => ({ ...item, order: i })))
+
+  // REPLACE your removePlace with this async version
+const removePlace = async (placeId: string) => {
+  const next = (selectedPlaces ?? [])
+    .filter((tp) => tp.placeId !== placeId)
+    .map((p, i) => ({ ...p, order: i }))
+
+  // Optimistic UI
+  setSelectedPlaces(next)
+
+  if (trip?.id) {
+    try {
+      await updateTrip(trip.id, { places: next })
+    } catch (e) {
+      console.error("Failed to persist stop delete", e)
+    }
   }
+}
+// Reorder + persist
+const handleDragEnd = async (result: any) => {
+  if (!result?.destination) return
+  const items = Array.from(selectedPlaces ?? [])
+  const [moved] = items.splice(result.source.index, 1)
+  items.splice(result.destination.index, 0, moved)
+  const next = items.map((item, i) => ({ ...item, order: i }))
+
+  // Optimistic UI
+  setSelectedPlaces(next)
+
+  // Persist if this is an existing trip
+  if (trip?.id) {
+    try {
+      await updateTrip(trip.id, { places: next })
+    } catch (e) {
+      console.error("Failed to persist reorder", e)
+    }
+  }
+}
 
   // Add a custom stop from coords (+ optional name)
   const addCustomStop = (coords: LatLngLiteral, name?: string) => {
@@ -368,7 +497,8 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
     { value: "memorials", label: t("category.memorials") },
   ]
 
-  return (
+return (
+  <>
     <div className="space-y-6">
       {error && (
         <Alert variant="destructive">
@@ -376,17 +506,17 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-
-      {/* Trip Details */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Trip Details</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="tripName">Trip Name *</Label>
-            <Input id="tripName" value={tripName} onChange={(e) => setTripName(e.target.value)} placeholder="My Timor-Leste Adventure" />
-          </div>
+    </div>
+    {/* Trip Details */}
+    <Card>
+      <CardHeader>
+        <CardTitle>Trip Details</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="tripName">Trip Name *</Label>
+          <Input id="tripName" value={tripName} onChange={(e) => setTripName(e.target.value)} placeholder="My Timor-Leste Adventure" />
+        </div>
 
           <div className="space-y-2">
             <Label htmlFor="tripDescription">Description (Optional)</Label>
@@ -486,285 +616,482 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
         </CardContent>
       </Card>
 
-      <Tabs defaultValue="places" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="places">Select Places</TabsTrigger>
-          <TabsTrigger value="itinerary">Plan Itinerary</TabsTrigger>
-        </TabsList>
+<Tabs defaultValue="places" className="w-full">
+  <TabsList className="grid w-full grid-cols-2">
+    <TabsTrigger value="places">Select Places</TabsTrigger>
+    <TabsTrigger value="itinerary">Plan Itinerary</TabsTrigger>
+  </TabsList>
 
-        <TabsContent value="places" className="space-y-4">
-          {/* Sub-tabs for selection modes */}
-          <Tabs value={selectTab} onValueChange={(v) => setSelectTab(v as any)}>
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="list">Browse List</TabsTrigger>
-              <TabsTrigger value="area">Search Area</TabsTrigger>
-              <TabsTrigger value="map">Pick on Map</TabsTrigger>
-            </TabsList>
+  {/* -------------------- SELECT PLACES TAB -------------------- */}
+  <TabsContent value="places" className="space-y-4">
+    {/* Sub-tabs for selection modes */}
+    <Tabs value={selectTab} onValueChange={(v) => setSelectTab(v as any)}>
+      <TabsList className="grid w-full grid-cols-3">
+        <TabsTrigger value="list">Browse List</TabsTrigger>
+        <TabsTrigger value="area">Search Area</TabsTrigger>
+        <TabsTrigger value="map">Pick on Map</TabsTrigger>
+      </TabsList>
 
-            {/* List mode (existing) */}
-            <TabsContent value="list" className="space-y-4">
-              <Card>
-                <CardHeader><CardTitle>Available Places</CardTitle></CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex gap-4">
-                    <Input className="flex-1" placeholder="Search places..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-                    <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                      <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {[
-                          { value: "all", label: "All Categories" },
-                          { value: "history", label: t("category.history") },
-                          { value: "culture", label: t("category.culture") },
-                          { value: "nature", label: t("category.nature") },
-                          { value: "food", label: t("category.food") },
-                          { value: "memorials", label: t("category.memorials") },
-                        ].map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
+      {/* List mode */}
+      <TabsContent value="list" className="space-y-4">
+        <Card>
+          <CardHeader><CardTitle>Available Places</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex gap-4">
+              <Input
+                className="flex-1"
+                placeholder="Search places..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {[
+                    { value: "all", label: "All Categories" },
+                    { value: "history", label: t("category.history") },
+                    { value: "culture", label: t("category.culture") },
+                    { value: "nature", label: t("category.nature") },
+                    { value: "food", label: t("category.food") },
+                    { value: "memorials", label: t("category.memorials") },
+                  ].map((c) => (
+                    <SelectItem key={c.value} value={c.value}>
+                      {c.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-96 overflow-y-auto">
-                    {filteredPlaces.map((place) => (
-                      <Card key={place.id} className="cursor-pointer hover:shadow-md transition-shadow">
-                        <CardContent className="p-4">
-                          <div className="flex justify-between items-start mb-2">
-                            <h3 className="font-medium text-sm">{place.title}</h3>
-                            <Button size="sm" variant="outline" onClick={() => addPlace(place)}><Plus className="h-3 w-3" /></Button>
-                          </div>
-                          <p className="text-xs text-muted-foreground mb-2 line-clamp-2">{place.description}</p>
-                          <div className="flex items-center gap-2">
-                            <Badge variant="secondary" className="text-xs">{t(safeCategoryKey(place.category))}</Badge>
-                            <span className="text-xs text-muted-foreground flex items-center"><MapPin className="h-3 w-3 mr-1" />{place.municipality ?? "Unknown"}</span>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-
-                  {filteredPlaces.length === 0 && (
-                    <div className="text-center py-8 text-muted-foreground">
-                      <MapPin className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                      <p>No places found matching your criteria</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-96 overflow-y-auto">
+              {filteredPlaces.map((place) => (
+                <Card key={place.id} className="cursor-pointer hover:shadow-md transition-shadow">
+                  <CardContent className="p-4">
+                    <div className="flex justify-between items-start mb-2">
+                      <h3 className="font-medium text-sm">{place.title}</h3>
+                      <Button size="sm" variant="outline" onClick={() => addPlace(place)}>
+                        <Plus className="h-3 w-3" />
+                      </Button>
                     </div>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* Area search (Nominatim) */}
-            <TabsContent value="area" className="space-y-4">
-              <Card>
-                <CardHeader><CardTitle>Search an Area</CardTitle></CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex gap-2">
-                    <div className="relative flex-1">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        className="pl-9"
-                        placeholder="e.g., Maubisse, Baucau, beach near Dili…"
-                        value={areaQuery}
-                        onChange={(e) => setAreaQuery(e.target.value)}
-                        onKeyDown={(e) => e.key === "Enter" && handleAreaSearch()}
-                      />
+                    <p className="text-xs text-muted-foreground mb-2 line-clamp-2">
+                      {place.description}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary" className="text-xs">
+                        {t(safeCategoryKey(place.category))}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground flex items-center">
+                        <MapPin className="h-3 w-3 mr-1" />
+                        {place.municipality ?? "Unknown"}
+                      </span>
                     </div>
-                    <Button onClick={handleAreaSearch} disabled={areaLoading}>
-                      {areaLoading ? "Searching…" : "Search"}
-                    </Button>
-                  </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
 
-                  {areaErr ? (
-                    <p className="text-sm text-destructive">{areaErr}</p>
-                  ) : null}
+            {filteredPlaces.length === 0 && (
+              <div className="text-center py-8 text-muted-foreground">
+                <MapPin className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <p>No places found matching your criteria</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </TabsContent>
 
-                  <div className="grid gap-3">
-                    {areaResults.map((r, idx) => {
-                      const lat = parseFloat(r.lat)
-                      const lng = parseFloat(r.lon)
-                      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
-                      return (
-                        <Card key={idx}>
-                          <CardContent className="p-3 flex items-start justify-between gap-3">
-                            <div>
-                              <p className="text-sm font-medium">{r.display_name}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {lat.toFixed(4)}, {lng.toFixed(4)}
-                              </p>
-                            </div>
-                            <Button size="sm" onClick={() => addCustomStop({ lat, lng }, r.display_name)}>Add</Button>
-                          </CardContent>
-                        </Card>
-                      )
-                    })}
-                    {(!areaLoading && areaResults.length === 0 && areaQuery.trim() !== "") && (
-                      <p className="text-sm text-muted-foreground">No results.</p>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
+      {/* Area search */}
+      <TabsContent value="area" className="space-y-4">
+        <Card>
+          <CardHeader><CardTitle>Search an Area</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  className="pl-9"
+                  placeholder="e.g., Maubisse, Baucau, beach near Dili…"
+                  value={areaQuery}
+                  onChange={(e) => setAreaQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleAreaSearch()}
+                />
+              </div>
+              <Button onClick={handleAreaSearch} disabled={areaLoading}>
+                {areaLoading ? "Searching…" : "Search"}
+              </Button>
+            </div>
 
-            {/* Map pick */}
-            <TabsContent value="map" className="space-y-4">
-              <Card>
-                <CardHeader><CardTitle>Pick on Map</CardTitle></CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="h-[360px] rounded overflow-hidden">
-                    <MapContainer
-                      center={{ lat: -8.5586, lng: 125.5736 }}
-                      zoom={8}
-                      className="h-full w-full"
-                      attributionControl={false}
-                      zoomControl={true}
-                    >
-                      <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                      <MapClickCapture onPick={(ll) => {
-                        setPendingPoint(ll)
-                        setCustomStopName("")
-                      }} />
-                      {pendingPoint && <Marker position={pendingPoint} />}
-                    </MapContainer>
-                  </div>
+            {areaErr ? <p className="text-sm text-destructive">{areaErr}</p> : null}
 
-                  {pendingPoint && (
-                    <div className="grid gap-3 md:grid-cols-3 items-end">
-                      <div className="md:col-span-2">
-                        <Label htmlFor="customStopName">Name/Label</Label>
-                        <Input
-                          id="customStopName"
-                          placeholder="e.g., Scenic lookout"
-                          value={customStopName}
-                          onChange={(e) => setCustomStopName(e.target.value)}
-                        />
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {pendingPoint.lat.toFixed(4)}, {pendingPoint.lng.toFixed(4)}
+            <div className="grid gap-3">
+              {areaResults.map((r, idx) => {
+                const lat = parseFloat(r.lat)
+                const lng = parseFloat(r.lon)
+                if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+                return (
+                  <Card key={idx}>
+                    <CardContent className="p-3 flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium">{r.display_name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {lat.toFixed(4)}, {lng.toFixed(4)}
                         </p>
                       </div>
-                      <div className="flex gap-2">
-                        <Button
-                          className="flex-1"
-                          onClick={() => {
-                            addCustomStop(pendingPoint, customStopName)
-                            setPendingPoint(null)
-                            setCustomStopName("")
-                          }}
-                        >
-                          Add Stop
-                        </Button>
-                        <Button variant="outline" onClick={() => { setPendingPoint(null); setCustomStopName("") }}>
-                          Cancel
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
-        </TabsContent>
-
-        <TabsContent value="itinerary" className="space-y-4">
-          {tripStats && (
-            <Card>
-              <CardHeader><CardTitle>Trip Overview</CardTitle></CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="flex items-center gap-2">
-                    <Route className="h-4 w-4 text-muted-foreground" />
-                    <div>
-                      <p className="text-sm font-medium">{Math.round(tripStats.totalDistance)} km</p>
-                      <p className="text-xs text-muted-foreground">Total Distance</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Car className="h-4 w-4 text-muted-foreground" />
-                    <div>
-                      <p className="text-sm font-medium">{Math.round(tripStats.totalTime)} hours</p>
-                      <p className="text-xs text-muted-foreground">Travel Time</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Calendar className="h-4 w-4 text-muted-foreground" />
-                    <div>
-                      <p className="text-sm font-medium">{tripStats.estimatedDays} days</p>
-                      <p className="text-xs text-muted-foreground">Recommended Duration</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-4 text-xs text-muted-foreground">
-                  Start: <span className="font-medium">{startKey === "none" ? "First stop" : "Dili"}</span>
-                  {endCoords && endName ? <> • End: <span className="font-medium">{endName}</span></> : null}
-                  {" "}• Mode: <span className="font-medium capitalize">{transportMode}</span>
-                  {" "}• Roads: <span className="font-medium capitalize">{roadCondition}</span>
-                  {useOverride ? <> • (Using overrides)</> : null}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Itinerary builder */}
-          <Card>
-            <CardHeader><CardTitle>Your Itinerary ({selectedPlaces.length} places)</CardTitle></CardHeader>
-            <CardContent>
-              {selectedPlaces.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <MapPin className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>No places added yet</p>
-                  <p className="text-sm">Switch to "Select Places" tab to add destinations</p>
-                </div>
-              ) : (
-                <DragDropContext onDragEnd={handleDragEnd}>
-                  <Droppable droppableId="trip-places">
-                    {(provided) => (
-                      <div {...provided.droppableProps} ref={provided.innerRef} className="space-y-3">
-                        {selectedPlaces.map((tp, index) => (
-                          <Draggable key={tp.placeId} draggableId={tp.placeId} index={index}>
-                            {(provided) => (
-                              <Card ref={provided.innerRef} {...provided.draggableProps} className="relative">
-                                <CardContent className="p-4">
-                                  <div className="flex items-start gap-3">
-                                    <div {...provided.dragHandleProps} className="flex items-center justify-center w-8 h-8 bg-muted rounded cursor-grab">
-                                      <GripVertical className="h-4 w-4" />
-                                    </div>
-                                    <div className="flex-1">
-                                      <div className="flex items-start justify-between mb-2">
-                                        <div>
-                                          <h3 className="font-medium">{tp.place.title}</h3>
-                                          <p className="text-sm text-muted-foreground">
-                                            {tp.place.municipality ?? "Unknown"} • {t(safeCategoryKey(tp.place.category))}
-                                          </p>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                          <Badge variant="outline" className="text-xs">Stop {index + 1}</Badge>
-                                          <Button size="sm" variant="ghost" onClick={() => removePlace(tp.placeId)}><X className="h-3 w-3" /></Button>
-                                        </div>
-                                      </div>
-                                      <Textarea placeholder="Add notes for this stop..." value={tp.notes || ""} onChange={(e) => updatePlaceNotes(tp.placeId, e.target.value)} rows={2} className="text-sm" />
-                                    </div>
-                                  </div>
-                                </CardContent>
-                              </Card>
-                            )}
-                          </Draggable>
-                        ))}
-                        {provided.placeholder}
-                      </div>
-                    )}
-                  </Droppable>
-                </DragDropContext>
+                      <Button size="sm" onClick={() => addCustomStop({ lat, lng }, r.display_name)}>
+                        Add
+                      </Button>
+                    </CardContent>
+                  </Card>
+                )
+              })}
+              {!areaLoading && areaResults.length === 0 && areaQuery.trim() !== "" && (
+                <p className="text-sm text-muted-foreground">No results.</p>
               )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+            </div>
+          </CardContent>
+        </Card>
+      </TabsContent>
 
-      {/* Actions */}
-      <div className="flex gap-4">
-        <Button onClick={handleSave} disabled={loading} className="flex-1">
-          {loading ? (<><Clock className="mr-2 h-4 w-4 animate-spin" />Saving...</>) : (<><Save className="mr-2 h-4 w-4" />{trip ? "Update Trip" : "Save Trip"}</>)}
-        </Button>
-        {onCancel && <Button variant="outline" onClick={onCancel}>Cancel</Button>}
+      {/* Map pick */}
+      <TabsContent value="map" className="space-y-4">
+        <Card>
+          <CardHeader><CardTitle>Pick on Map</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="h-[360px] rounded overflow-hidden">
+              <MapContainer
+                center={{ lat: -8.5586, lng: 125.5736 }}
+                zoom={8}
+                className="h-full w-full"
+                attributionControl={false}
+                zoomControl={true}
+              >
+                <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                <MapClickCapture
+                  onPick={(ll) => {
+                    setPendingPoint(ll)
+                    setCustomStopName("")
+                  }}
+                />
+                {pendingPoint && <Marker position={pendingPoint} />}
+              </MapContainer>
+            </div>
+
+            {pendingPoint && (
+              <div className="grid gap-3 md:grid-cols-3 items-end">
+                <div className="md:col-span-2">
+                  <Label htmlFor="customStopName">Name/Label</Label>
+                  <Input
+                    id="customStopName"
+                    placeholder="e.g., Scenic lookout"
+                    value={customStopName}
+                    onChange={(e) => setCustomStopName(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {pendingPoint.lat.toFixed(4)}, {pendingPoint.lng.toFixed(4)}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    className="flex-1"
+                    onClick={() => {
+                      addCustomStop(pendingPoint, customStopName)
+                      setPendingPoint(null)
+                      setCustomStopName("")
+                    }}
+                  >
+                    Add Stop
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setPendingPoint(null)
+                      setCustomStopName("")
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </TabsContent>
+    </Tabs>
+  </TabsContent>
+
+  {/* -------------------- ITINERARY TAB -------------------- */}
+  <TabsContent value="itinerary" className="space-y-4">
+    {tripStats && (
+      <Card>
+        <CardHeader><CardTitle>Trip Overview</CardTitle></CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="flex items-center gap-2">
+              <Route className="h-4 w-4 text-muted-foreground" />
+              <div>
+                <p className="text-sm font-medium">{Math.round(tripStats.totalDistance)} km</p>
+                <p className="text-xs text-muted-foreground">Total Distance</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Car className="h-4 w-4 text-muted-foreground" />
+              <div>
+                <p className="text-sm font-medium">{Math.round(tripStats.totalTime)} hours</p>
+                <p className="text-xs text-muted-foreground">Travel Time</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Calendar className="h-4 w-4 text-muted-foreground" />
+              <div>
+                <p className="text-sm font-medium">{tripStats.estimatedDays} days</p>
+                <p className="text-xs text-muted-foreground">Recommended Duration</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 text-xs text-muted-foreground">
+            Start: <span className="font-medium">{startKey === "none" ? "First stop" : "Dili"}</span>
+            {endCoords && endName ? <> • End: <span className="font-medium">{endName}</span></> : null}
+            {" "}• Mode: <span className="font-medium capitalize">{transportMode}</span>
+            {" "}• Roads: <span className="font-medium capitalize">{roadCondition}</span>
+            {useOverride ? <> • (Using overrides)</> : null}
+          </div>
+        </CardContent>
+      </Card>
+    )}
+
+    {/* Itinerary builder */}
+    <Card>
+      <CardHeader><CardTitle>Your Itinerary ({selectedPlaces.length} places)</CardTitle></CardHeader>
+      <CardContent>
+        {selectedPlaces.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground">
+            <MapPin className="h-12 w-12 mx-auto mb-4 opacity-50" />
+            <p>No places added yet</p>
+            <p className="text-sm">Switch to "Select Places" tab to add destinations</p>
+          </div>
+        ) : (
+          <DragDropContext onDragEnd={handleDragEnd}>
+            <Droppable droppableId="trip-places">
+              {(provided) => (
+                <div
+                  {...provided.droppableProps}
+                  ref={provided.innerRef}
+                  className="space-y-3"
+                >
+                  {selectedPlaces.map((tp, index) => (
+                    <Draggable key={tp.placeId} draggableId={tp.placeId} index={index}>
+                      {(provided) => (
+                        <Card ref={provided.innerRef} {...provided.draggableProps} className="relative">
+                          <CardContent className="p-4">
+                            <div className="flex items-start gap-3">
+                              <div
+                                {...provided.dragHandleProps}
+                                className="flex items-center justify-center w-8 h-8 bg-muted rounded cursor-grab"
+                                title="Drag to reorder"
+                              >
+                                <GripVertical className="h-4 w-4" />
+                              </div>
+
+                              <div className="flex-1">
+                                <div className="flex items-start justify-between mb-2">
+                                  <div>
+                                    <h3 className="font-medium">
+                                      {tp.place.title}
+                                      {tp.place.id?.startsWith("custom-") && (
+                                        <span className="ml-2 rounded bg-amber-50 px-2 py-0.5 text-xs text-amber-700 border border-amber-200">
+                                          Custom pin
+                                        </span>
+                                      )}
+                                    </h3>
+                                    <p className="text-sm text-muted-foreground">
+                                      {tp.place.municipality ?? "Unknown"} • {t(safeCategoryKey(tp.place.category))}
+                                    </p>
+                                    {tp.place.id?.startsWith("custom-") && (
+                                      <p className="mt-1 text-xs text-muted-foreground">
+                                        {tp.place.coords?.lat?.toFixed?.(4)}, {tp.place.coords?.lng?.toFixed?.(4)}
+                                      </p>
+                                    )}
+                                  </div>
+
+                                  <div className="flex items-center gap-2">
+                                    <Badge variant="outline" className="text-xs">Stop {index + 1}</Badge>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => openStopEditor(index)}
+                                      title="Edit stop"
+                                    >
+                                      <Pencil className="h-3 w-3 mr-1" /> Edit
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => removePlace(tp.placeId)}
+                                      title="Remove stop"
+                                    >
+                                      <X className="h-3 w-3" />
+                                    </Button>
+                                  </div>
+                                </div>
+
+                                <Textarea
+                                  placeholder="Add notes for this stop..."
+                                  value={tp.notes || ""}
+                                  onChange={(e) => updatePlaceNotes(tp.placeId, e.target.value)}
+                                  rows={2}
+                                  className="text-sm"
+                                />
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      )}
+                    </Draggable>
+                  ))}
+                  {provided.placeholder}
+                </div>
+              )}
+            </Droppable>
+          </DragDropContext>
+        )}
+      </CardContent>
+    </Card>
+  </TabsContent>
+</Tabs>
+
+{/* Actions */}
+<div className="flex gap-4 mt-6">
+  <Button onClick={handleSave} disabled={loading} className="flex-1">
+    {loading ? (
+      <>
+        <Clock className="mr-2 h-4 w-4 animate-spin" />
+        Saving...
+      </>
+    ) : (
+      <>
+        <Save className="mr-2 h-4 w-4" />
+        {trip ? "Update Trip" : "Save Trip"}
+      </>
+    )}
+  </Button>
+  {onCancel && (
+    <Button variant="outline" onClick={onCancel}>
+      Cancel
+    </Button>
+  )}
+</div>
+
+{/* ---- Stop Editor Modal ---- */}
+{stopEditor && (
+  <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40">
+    <div className="w-full max-w-3xl rounded-2xl bg-white p-6 shadow-xl">
+      <div className="mb-4 flex items-center justify-between">
+        <h2 className="text-lg font-semibold">Edit Stop {stopEditor.index + 1}</h2>
+        <button onClick={closeStopEditor} className="rounded-lg p-2 hover:bg-gray-100" aria-label="Close">
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+
+      <div className="grid gap-6 md:grid-cols-2">
+        {/* LEFT: Notes */}
+        <div>
+          <Label className="mb-1 block">Notes</Label>
+          <Textarea
+            rows={6}
+            value={stopEditor.notes}
+            onChange={(e) => setStopEditor((s) => (s ? { ...s, notes: e.target.value } : s))}
+            placeholder="parking, entry fee, timing tips…"
+          />
+          <p className="mt-2 text-xs text-muted-foreground">Notes save to this stop only.</p>
+        </div>
+
+        {/* RIGHT: Replace or Edit Custom */}
+        <div>
+          {stopEditor.isCustom ? (
+            <>
+              <div className="space-y-2">
+                <Label className="block">Custom title</Label>
+                <Input
+                  value={stopEditor.title}
+                  onChange={(e) => setStopEditor((s) => (s ? { ...s, title: e.target.value } : s))}
+                  placeholder="e.g., Scenic lookout"
+                />
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Latitude</Label>
+                  <Input
+                    inputMode="decimal"
+                    value={stopEditor.lat ?? ""}
+                    onChange={(e) => setStopEditor((s) => (s ? { ...s, lat: e.target.value } : s))}
+                    placeholder="-8.5586"
+                  />
+                </div>
+                <div>
+                  <Label>Longitude</Label>
+                  <Input
+                    inputMode="decimal"
+                    value={stopEditor.lng ?? ""}
+                    onChange={(e) => setStopEditor((s) => (s ? { ...s, lng: e.target.value } : s))}
+                    placeholder="125.5736"
+                  />
+                </div>
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                These update the pinned location for this custom stop.
+              </p>
+            </>
+          ) : (
+            <>
+              <Label className="block mb-2">Replace with another place</Label>
+              <Input
+                className="flex-1"
+                placeholder="Search places…"
+                value={stopEditor.replaceSearch}
+                onChange={(e) =>
+                  setStopEditor((s) => (s ? { ...s, replaceSearch: e.target.value } : s))
+                }
+              />
+              <div className="mt-3 max-h-52 overflow-y-auto rounded border">
+                {replaceCandidates.length === 0 ? (
+                  <div className="p-3 text-sm text-muted-foreground">No results.</div>
+                ) : (
+                  replaceCandidates.map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() =>
+                        setStopEditor((s) =>
+                          s ? { ...s, replaceSelectedPlaceId: p.id as string } : s
+                        )
+                      }
+                      className={`w-full text-left p-3 border-b last:border-b-0 hover:bg-muted ${
+                        stopEditor.replaceSelectedPlaceId === p.id ? "bg-muted" : ""
+                      }`}
+                    >
+                      <div className="font-medium text-sm">{p.title}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {p.municipality ?? "Unknown"} • {t(safeCategoryKey(p.category))}
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                This will replace the current stop’s location.
+              </p>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-6 flex items-center justify-end gap-3">
+        <Button variant="outline" onClick={closeStopEditor}>Cancel</Button>
+        <Button onClick={applyStopEdit}>Apply</Button>
       </div>
     </div>
-  )
+  </div>
+)}
+</>
+);
 }

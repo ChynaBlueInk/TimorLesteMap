@@ -11,7 +11,7 @@ export interface TripPlace {
 export type TransportMode =
   | "car"
   | "motorbike"
-  | "scooter"    // NEW: scooter
+  | "scooter" // NEW: scooter
   | "bus"
   | "bicycle"
   | "walking"
@@ -45,7 +45,7 @@ export interface Trip {
 
 const STORAGE_KEY = "harii-timor-trips"
 
-// ---------- localStorage helpers (unchanged) ----------
+// ---------- localStorage helpers ----------
 const getStoredTrips = (): Trip[] => {
   if (typeof window === "undefined") return []
   try {
@@ -72,7 +72,20 @@ const setStoredTrips = (trips: Trip[]): void => {
   }
 }
 
-// ---------- API helpers (new) ----------
+// Small internal helper to ensure a trip exists
+const getTripStrict = async (tripId: string): Promise<Trip> => {
+  const t = await getTrip(tripId)
+  if (!t) throw new Error(`Trip not found: ${tripId}`)
+  return t
+}
+
+// Normalize orders to 0..n-1 and keep array sorted by order
+const normalizePlaces = (places: TripPlace[]): TripPlace[] =>
+  [...places]
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+    .map((p, idx) => ({ ...p, order: idx }))
+
+// ---------- API helpers ----------
 type ApiTrip = Omit<Trip, "createdAt" | "updatedAt"> & {
   createdAt: number
   updatedAt: number
@@ -135,7 +148,7 @@ async function apiDeleteTrip(id: string): Promise<void> {
   }
 }
 
-// ---------- Public API you already use (now with server sync) ----------
+// ---------- Public Trip API (existing) ----------
 export const createTrip = async (
   tripData: Omit<Trip, "id" | "createdAt" | "updatedAt">
 ): Promise<{ id: string }> => {
@@ -208,6 +221,121 @@ export const getAllTrips = async (): Promise<Trip[]> => {
   return trips.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
 }
 
+// ---------- NEW: Stop-level helpers (edit / insert / delete / reorder) ----------
+
+/**
+ * Update a single stop by placeId (notes, place, order, etc).
+ * Only the provided fields in `patch` are changed.
+ */
+export const updateTripPlace = async (
+  tripId: string,
+  placeId: string,
+  patch: Partial<TripPlace>
+): Promise<void> => {
+  const trip = await getTripStrict(tripId)
+  const nextPlaces = trip.places.map((p) => (p.placeId === placeId ? { ...p, ...patch } : p))
+  const normalized = normalizePlaces(nextPlaces)
+  await updateTrip(tripId, { places: normalized })
+}
+
+/**
+ * Update a single stop by its array index.
+ */
+export const updateTripPlaceAt = async (
+  tripId: string,
+  index: number,
+  patch: Partial<TripPlace>
+): Promise<void> => {
+  const trip = await getTripStrict(tripId)
+  if (index < 0 || index >= trip.places.length) throw new Error("index out of range")
+  const next = [...trip.places]
+  next[index] = { ...next[index], ...patch }
+  const normalized = normalizePlaces(next)
+  await updateTrip(tripId, { places: normalized })
+}
+
+/**
+ * Insert a new stop at a specific index (or at the end if index is omitted).
+ */
+export const insertTripPlace = async (
+  tripId: string,
+  newPlace: TripPlace,
+  index?: number
+): Promise<void> => {
+  const trip = await getTripStrict(tripId)
+  const next = [...trip.places]
+  const insertAt = typeof index === "number" ? Math.max(0, Math.min(index, next.length)) : next.length
+  next.splice(insertAt, 0, newPlace)
+  const normalized = normalizePlaces(next)
+  await updateTrip(tripId, { places: normalized })
+}
+
+/**
+ * Delete a stop by placeId.
+ */
+export const deleteTripPlace = async (tripId: string, placeId: string): Promise<void> => {
+  const trip = await getTripStrict(tripId)
+  const filtered = trip.places.filter((p) => p.placeId !== placeId)
+  const normalized = normalizePlaces(filtered)
+  await updateTrip(tripId, { places: normalized })
+}
+
+/**
+ * Reorder stops by an array of placeIds specifying the desired order.
+ */
+export const reorderTripPlaces = async (
+  tripId: string,
+  newOrderPlaceIds: string[]
+): Promise<void> => {
+  const trip = await getTripStrict(tripId)
+  const byId = new Map(trip.places.map((p) => [p.placeId, p]))
+  const reordered: TripPlace[] = []
+  // First, place any ids supplied in the specified order
+  newOrderPlaceIds.forEach((id, idx) => {
+    const found = byId.get(id)
+    if (found) reordered.push({ ...found, order: idx })
+  })
+  // Then, append any remaining (not included) to preserve data
+  trip.places.forEach((p) => {
+    if (!newOrderPlaceIds.includes(p.placeId)) {
+      reordered.push({ ...p, order: reordered.length })
+    }
+  })
+  const normalized = normalizePlaces(reordered)
+  await updateTrip(tripId, { places: normalized })
+}
+
+/**
+ * Swap two stops by their placeIds.
+ */
+export const swapTripPlaces = async (
+  tripId: string,
+  aPlaceId: string,
+  bPlaceId: string
+): Promise<void> => {
+  const trip = await getTripStrict(tripId)
+  const next = [...trip.places]
+  const ai = next.findIndex((p) => p.placeId === aPlaceId)
+  const bi = next.findIndex((p) => p.placeId === bPlaceId)
+  if (ai < 0 || bi < 0) throw new Error("placeId not found")
+  ;[next[ai], next[bi]] = [next[bi], next[ai]]
+  const normalized = normalizePlaces(next)
+  await updateTrip(tripId, { places: normalized })
+}
+
+/**
+ * Convenience: set manual distance/time overrides on a trip.
+ */
+export const setTripOverrides = async (
+  tripId: string,
+  overrides: {
+    overrideDistanceKm?: number
+    overrideTimeHours?: number
+  }
+): Promise<void> => {
+  await updateTrip(tripId, overrides)
+}
+
 // --- Distance / time helpers ---
 
 // Great-circle distance (km)
@@ -230,7 +358,7 @@ export const calculateDistance = (
 const MODE_BASE_SPEED: Record<TransportMode, number> = {
   car: 45,
   motorbike: 40,
-  scooter: 38,   // NEW: scooter (slightly slower than motorbike)
+  scooter: 38, // NEW: scooter (slightly slower than motorbike)
   bus: 35,
   bicycle: 14,
   walking: 4.5,
