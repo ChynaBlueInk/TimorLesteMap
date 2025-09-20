@@ -9,14 +9,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { AlertCircle, ArrowLeft, Map } from "lucide-react";
 
-// 1) Crash-proof dynamic import with SSR disabled + graceful fallback
+// Crash-proof dynamic import with SSR disabled + graceful fallback
 const TripPlanner: any = dynamic(
   () =>
     import("@/components/TripPlanner")
       .then((m) => m.default ?? m)
       .catch((err) => {
         console.error("TripPlanner failed to load:", err);
-        // Return a tiny fallback component if import fails
+        // Tiny fallback component if import fails
         return function TripPlannerMissing() {
           return (
             <Card className="border-destructive/40">
@@ -52,9 +52,7 @@ const TripPlanner: any = dynamic(
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-muted-foreground">
-            Preparing the planner interface…
-          </p>
+          <p className="text-sm text-muted-foreground">Preparing the planner interface…</p>
         </CardContent>
       </Card>
     ),
@@ -65,21 +63,23 @@ export default function PlanTripPage() {
   const params = useSearchParams();
   const router = useRouter();
 
-  const editId = params.get("edit");
+  // Accept BOTH ?edit=<id> and ?trip=<id>
+  const tripId = params.get("edit") ?? params.get("trip");
+
   const [trip, setTrip] = useState<Trip | null>(null);
-  const [loading, setLoading] = useState<boolean>(!!editId);
+  const [loading, setLoading] = useState<boolean>(!!tripId);
   const [error, setError] = useState<string | null>(null);
 
-  // 2) Load the trip only when editing
+  // Load the trip only when editing (i.e., when a trip id is present)
   useEffect(() => {
     let cancelled = false;
-    if (!editId) return;
+    if (!tripId) return;
 
     (async () => {
       setLoading(true);
       setError(null);
       try {
-        const t = await getTrip(editId);
+        const t = await getTrip(tripId);
         if (!cancelled) setTrip(t ?? null);
       } catch (e: any) {
         console.error("Failed to load trip:", e);
@@ -92,12 +92,9 @@ export default function PlanTripPage() {
     return () => {
       cancelled = true;
     };
-  }, [editId]);
+  }, [tripId]);
 
-  const heading = useMemo(
-    () => (editId ? "Edit Trip" : "Plan a Trip"),
-    [editId]
-  );
+  const heading = useMemo(() => (tripId ? "Edit Trip" : "Plan a Trip"), [tripId]);
 
   if (loading) {
     return (
@@ -127,7 +124,7 @@ export default function PlanTripPage() {
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">{error}</p>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => router.push("/trips")}>
+              <Button variant="outline" onClick={() => router.push("/trips/saved")}>
                 <ArrowLeft className="mr-2 h-4 w-4" />
                 Back to Trips
               </Button>
@@ -142,8 +139,8 @@ export default function PlanTripPage() {
     <div className="container mx-auto px-4 py-8">
       <TripPlanner
         trip={trip ?? undefined}
-        onSave={() => router.push("/trips")}
-        onCancel={() => router.push("/trips")}
+        onSave={() => router.push("/trips/saved")}
+        onCancel={() => router.push("/trips/saved")}
       />
     </div>
   );
