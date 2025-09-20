@@ -44,6 +44,16 @@ export interface Trip {
 }
 
 const STORAGE_KEY = "harii-timor-trips"
+// Enable server sync (calls /api/trips) only when explicitly allowed.
+// In dev: leave NEXT_PUBLIC_TRIP_API unset or "off" to skip server calls.
+// In prod: set NEXT_PUBLIC_TRIP_API="on" to enable syncing.
+const TRIP_API_ENABLED =
+  (typeof process !== "undefined" &&
+    (process.env.NEXT_PUBLIC_TRIP_API === "on" ||
+     process.env.NEXT_PUBLIC_TRIP_API === "true" ||
+     process.env.NEXT_PUBLIC_TRIP_API === "1")) ||
+  false
+
 
 // ---------- localStorage helpers ----------
 const getStoredTrips = (): Trip[] => {
@@ -101,6 +111,7 @@ function toApiPayload(trip: Trip): ApiTrip {
 }
 
 async function apiPublishTrip(trip: Trip): Promise<void> {
+  if (!TRIP_API_ENABLED) return
   if (typeof fetch === "undefined") return
   try {
     const res = await fetch("/api/trips", {
@@ -118,6 +129,7 @@ async function apiPublishTrip(trip: Trip): Promise<void> {
 }
 
 async function apiUpdateTrip(trip: Trip): Promise<void> {
+  if (!TRIP_API_ENABLED) return
   if (typeof fetch === "undefined") return
   try {
     const res = await fetch(`/api/trips/${encodeURIComponent(trip.id)}`, {
@@ -135,10 +147,10 @@ async function apiUpdateTrip(trip: Trip): Promise<void> {
 }
 
 async function apiDeleteTrip(id: string): Promise<void> {
+  if (!TRIP_API_ENABLED) return
   if (typeof fetch === "undefined") return
   try {
     const res = await fetch(`/api/trips/${encodeURIComponent(id)}`, { method: "DELETE" })
-    // 404 is fine (e.g., never published)
     if (!res.ok && res.status !== 404) {
       const txt = await res.text().catch(() => "")
       throw new Error(`DELETE /api/trips/${id} failed: ${res.status} ${txt}`)
@@ -147,6 +159,7 @@ async function apiDeleteTrip(id: string): Promise<void> {
     console.warn("Delete public trip failed (local removed):", e)
   }
 }
+
 
 // ---------- Public Trip API (existing) ----------
 export const createTrip = async (
