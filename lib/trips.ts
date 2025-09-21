@@ -18,6 +18,10 @@ export type TransportMode =
 
 export type RoadCondition = "sealed" | "mixed" | "rough"
 export type StartKey = "dili" | "none"
+export type TripPhoto = {
+  url: string
+  caption?: string
+}
 
 export interface Trip {
   id: string
@@ -28,6 +32,9 @@ export interface Trip {
   updatedAt: Date
   ownerId: string
   isPublic: boolean
+
+  // Optional photos shown on trip detail & list cards
+  tripPhotos?: TripPhoto[]
 
   // Saved planning prefs
   transportMode?: TransportMode
@@ -40,8 +47,10 @@ export interface Trip {
   overrideDistanceKm?: number
   overrideTimeHours?: number
 
-  estimatedDuration?: number // in days
+  // Optional: derived estimate of duration in days
+  estimatedDuration?: number
 }
+
 
 const STORAGE_KEY = "harii-timor-trips"
 // Enable server sync (calls /api/trips) only when explicitly allowed.

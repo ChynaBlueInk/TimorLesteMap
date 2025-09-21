@@ -36,7 +36,7 @@ export default function Navigation() {
     return pathname === href || pathname?.startsWith(href + "/");
   };
 
-  const activeTrips = pathname?.startsWith("/trips");
+  const activeTrips = pathname?.startsWith("/trips") || pathname === "/plan-trip";
   const activePlaces =
     pathname === "/places" ||
     pathname === "/submit" ||
@@ -86,6 +86,13 @@ export default function Navigation() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-56">
+                <DropdownMenuItem asChild>
+                  <Link href="/plan-trip" className="flex items-center gap-2">
+                    <Plus className="h-4 w-4" />
+                    Add a new trip
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
                 <DropdownMenuItem asChild>
                   <Link href="/trips/saved" className="flex items-center gap-2">
                     <Route className="h-4 w-4" />
@@ -201,6 +208,15 @@ export default function Navigation() {
               </button>
               {mobileTripsOpen && (
                 <div className="ml-6 flex flex-col gap-1">
+                  <Link
+                    href="/plan-trip"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className={`rounded-md px-2 py-2 text-sm ${
+                      isActive("/plan-trip") ? "bg-white/20 text-white" : "text-white/90 hover:bg-white/10"
+                    }`}
+                  >
+                    Add a new trip
+                  </Link>
                   <Link
                     href="/trips/saved"
                     onClick={() => setMobileMenuOpen(false)}

@@ -25,6 +25,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd"
+import TripPhotosUploader, { type TripPhoto } from "@/components/TripPhotosUploader"
 import { Plus, X, MapPin, Clock, Route, Save, GripVertical, AlertCircle, Calendar, Car, Pin, Search, Pencil } from "lucide-react"
 
 // --- Map picker (react-leaflet) ---
@@ -79,6 +80,19 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
   const [tripDescription, setTripDescription] = useState(trip?.description || "")
   const [isPublic, setIsPublic] = useState(trip?.isPublic || false)
 
+  // Photos state (seed from existing trip if present)
+  const [tripPhotos, setTripPhotos] = useState<TripPhoto[]>(trip?.tripPhotos ?? [])
+
+  // Handle photo changes (local state + optional immediate persist)
+  const onPhotosChange = (photos: TripPhoto[]) => {
+    setTripPhotos(photos)
+    if (trip?.id) {
+      updateTrip(trip.id, { tripPhotos: photos }).catch(() => {
+        // TODO: show a toast/banner on failure
+      })
+    }
+  }
+
   const [transportMode, setTransportMode] = useState<TransportMode>(trip?.transportMode ?? "car")
   const [roadCondition, setRoadCondition] = useState<RoadCondition>(trip?.roadCondition ?? "mixed")
   const [startKey, setStartKey] = useState<StartKey>(trip?.startKey ?? "dili")
@@ -119,38 +133,39 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
   // Map-pick pending point
   const [pendingPoint, setPendingPoint] = useState<LatLngLiteral | null>(null)
   const [customStopName, setCustomStopName] = useState("")
-// ---- Stop Editor State / Helpers ----
-type StopEditorState = {
-  index: number
-  placeId: string
-  isCustom: boolean
-  title: string
-  lat?: string
-  lng?: string
-  notes: string
-  replaceSearch: string
-  replaceSelectedPlaceId?: string
-} | null
+  // ---- Stop Editor State / Helpers ----
+  type StopEditorState = {
+    index: number
+    placeId: string
+    isCustom: boolean
+    title: string
+    lat?: string
+    lng?: string
+    notes: string
+    replaceSearch: string
+    replaceSelectedPlaceId?: string
+  } | null
 
-const [stopEditor, setStopEditor] = useState<StopEditorState>(null)
+  const [stopEditor, setStopEditor] = useState<StopEditorState>(null)
 
-const openStopEditor = (index: number) => {
-  const tp = selectedPlaces[index]
-  const isCustom = tp.place.id?.startsWith("custom-") ?? false
-  setStopEditor({
-    index,
-    placeId: tp.placeId,
-    isCustom,
-    title: tp.place.title ?? "",
-    lat: isCustom ? String(tp.place.coords?.lat ?? "") : undefined,
-    lng: isCustom ? String(tp.place.coords?.lng ?? "") : undefined,
-    notes: tp.notes ?? "",
-    replaceSearch: "",
-    replaceSelectedPlaceId: undefined,
-  })
-}
+  const openStopEditor = (index: number) => {
+    const tp = selectedPlaces[index]
+    const isCustom = tp.place.id?.startsWith("custom-") ?? false
+    setStopEditor({
+      index,
+      placeId: tp.placeId,
+      isCustom,
+      title: tp.place.title ?? "",
+      lat: isCustom ? String(tp.place.coords?.lat ?? "") : undefined,
+      lng: isCustom ? String(tp.place.coords?.lng ?? "") : undefined,
+      notes: tp.notes ?? "",
+      replaceSearch: "",
+      replaceSelectedPlaceId: undefined,
+    })
+  }
 
-const closeStopEditor = () => setStopEditor(null)
+  const closeStopEditor = () => setStopEditor(null)
+
 
 // ---- Insert Stop (between cards) State / Helpers ----
 type InsertModalState = {
@@ -620,6 +635,15 @@ return (
           />
         </div>
 
+        {/* Trip Photos */}
+        <div className="space-y-2">
+          <Label>Photos (optional)</Label>
+          <TripPhotosUploader
+            value={tripPhotos}
+            onChange={onPhotosChange}
+          />
+        </div>
+
         {/* Mode, Road, Start */}
         <div className="grid gap-4 md:grid-cols-3">
           <div className="space-y-2">
@@ -726,7 +750,7 @@ return (
         <TabsTrigger value="itinerary">Plan Itinerary</TabsTrigger>
       </TabsList>
 
-      {/* -------------------- SELECT PLACES TAB -------------------- */}
+     {/* -------------------- SELECT PLACES TAB -------------------- */}
       <TabsContent value="places" className="space-y-4">
         {/* Sub-tabs: list / area / map */}
         <Tabs value={selectTab} onValueChange={(v) => setSelectTab(v as any)}>
@@ -921,7 +945,7 @@ return (
         </Tabs>
       </TabsContent>
 
-      {/* -------------------- ITINERARY TAB -------------------- */}
+  {/* -------------------- ITINERARY TAB -------------------- */}
       <TabsContent value="itinerary" className="space-y-4">
         {tripStats && (
           <Card>
@@ -1094,6 +1118,148 @@ return (
         </Card>
       </TabsContent>
     </Tabs>
+
+    {/* Insert Stop Modal */}
+    {insertModal && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <div className="w-full max-w-2xl rounded-lg bg-white shadow-lg">
+          <div className="border-b px-4 py-3 flex items-center justify-between">
+            <h3 className="text-base font-semibold">
+              Insert stop at position {insertModal.index + 1}
+            </h3>
+            <Button variant="ghost" size="sm" onClick={closeInsert}>Close</Button>
+          </div>
+
+          <div className="p-4 space-y-4">
+            {/* Mode toggle */}
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant={insertModal.mode === "existing" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setInsertModal(m => m ? { ...m, mode: "existing" } : m)}
+              >
+                Choose existing place
+              </Button>
+              <Button
+                type="button"
+                variant={insertModal.mode === "custom" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setInsertModal(m => m ? { ...m, mode: "custom" } : m)}
+              >
+                Add custom pin
+              </Button>
+            </div>
+
+            {/* Existing place picker */}
+            {insertModal.mode === "existing" && (
+              <div className="space-y-3">
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Search places by name..."
+                    value={insertModal.search}
+                    onChange={(e) =>
+                      setInsertModal(m => m ? { ...m, search: e.target.value } : m)
+                    }
+                  />
+                </div>
+                <div className="max-h-72 overflow-y-auto rounded border">
+                  {availablePlaces
+                    .filter(p =>
+                      insertModal.search.trim() === "" ||
+                      p.title.toLowerCase().includes(insertModal.search.toLowerCase())
+                    )
+                    .slice(0, 100)
+                    .map((p) => (
+                      <div
+                        key={p.id}
+                        className="flex items-center justify-between px-3 py-2 border-b last:border-b-0 hover:bg-muted/40"
+                      >
+                        <div>
+                          <p className="text-sm font-medium">{p.title}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {(p.municipality ?? "Unknown")} • {t(safeCategoryKey(p.category))}
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
+                          onClick={() => insertPlaceAt(insertModal.index, p)}
+                          title="Insert this place at the selected position"
+                        >
+                          Insert
+                        </Button>
+                      </div>
+                    ))}
+                  {availablePlaces.length === 0 && (
+                    <div className="p-4 text-sm text-muted-foreground">
+                      No places loaded yet.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Custom pin form */}
+            {insertModal.mode === "custom" && (
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="md:col-span-3 space-y-1">
+                  <Label htmlFor="insTitle">Name/Label</Label>
+                  <Input
+                    id="insTitle"
+                    value={insertModal.title}
+                    onChange={(e) =>
+                      setInsertModal(m => m ? { ...m, title: e.target.value } : m)
+                    }
+                    placeholder="e.g., Scenic lookout"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="insLat">Latitude</Label>
+                  <Input
+                    id="insLat"
+                    value={insertModal.lat}
+                    onChange={(e) =>
+                      setInsertModal(m => m ? { ...m, lat: e.target.value } : m)
+                    }
+                    placeholder="-8.5586"
+                    inputMode="decimal"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="insLng">Longitude</Label>
+                  <Input
+                    id="insLng"
+                    value={insertModal.lng}
+                    onChange={(e) =>
+                      setInsertModal(m => m ? { ...m, lng: e.target.value } : m)
+                    }
+                    placeholder="125.5736"
+                    inputMode="decimal"
+                  />
+                </div>
+                <div className="md:col-span-3">
+                  <Button
+                    onClick={() => {
+                      const lat = Number(insertModal.lat)
+                      const lng = Number(insertModal.lng)
+                      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+                      addCustomStopAt(insertModal.index, { lat, lng }, insertModal.title)
+                    }}
+                    disabled={
+                      !insertModal.lat || !insertModal.lng ||
+                      !Number.isFinite(Number(insertModal.lat)) ||
+                      !Number.isFinite(Number(insertModal.lng))
+                    }
+                  >
+                    Insert custom stop
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )}
 
     {/* Actions */}
     <div className="flex gap-4">
