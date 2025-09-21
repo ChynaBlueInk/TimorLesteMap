@@ -110,14 +110,24 @@ type ApiTrip = Omit<Trip, "createdAt" | "updatedAt"> & {
   updatedAt: number
 }
 
+// Converts ApiTrip (with numeric timestamps) to Trip (with Date objects)
+function fromApiTrip(apiTrip: ApiTrip): Trip {
+  return {
+    ...apiTrip,
+    createdAt: new Date(apiTrip.createdAt),
+    updatedAt: new Date(apiTrip.updatedAt),
+  }
+}
+
 function toApiPayload(trip: Trip): ApiTrip {
   const { createdAt, updatedAt, ...rest } = trip as any
   return {
     ...(rest as Omit<Trip, "createdAt" | "updatedAt">),
-    createdAt: trip.createdAt?.getTime?.() ?? Date.now(),
-    updatedAt: trip.updatedAt?.getTime?.() ?? Date.now(),
+    createdAt: trip.createdAt instanceof Date ? trip.createdAt.getTime() : Number(trip.createdAt),
+    updatedAt: trip.updatedAt instanceof Date ? trip.updatedAt.getTime() : Number(trip.updatedAt),
   }
 }
+
 
 async function apiPublishTrip(trip: Trip): Promise<void> {
   if (!TRIP_API_ENABLED) return
@@ -168,6 +178,23 @@ async function apiDeleteTrip(id: string): Promise<void> {
     console.warn("Delete public trip failed (local removed):", e)
   }
 }
+async function apiListTrips(): Promise<Trip[] | null> {
+  if (!TRIP_API_ENABLED) return null
+  if (typeof fetch === "undefined") return null
+  try {
+    const res = await fetch("/api/trips", { method: "GET" })
+    if (!res.ok) return null
+    const data = (await res.json()) as ApiTrip[] | Trip[]
+    // If server already returns dates as numbers, convert; otherwise pass-through
+    const list = Array.isArray(data) ? data : []
+    // Detect numeric timestamps
+    const needsConvert = list.length > 0 && typeof (list[0] as any).createdAt === "number"
+    const trips = needsConvert ? (list as ApiTrip[]).map(fromApiTrip) : (list as Trip[])
+    return trips
+  } catch {
+    return null
+  }
+}
 
 
 // ---------- Public Trip API (existing) ----------
@@ -206,6 +233,33 @@ export const updateTrip = async (tripId: string, updates: Partial<Trip>): Promis
   }
 }
 
+export const updateTripWithStatus = async (
+  tripId: string,
+  updates: Partial<Trip>
+): Promise<{ publishOk: boolean; error?: string }> => {
+  const trips = getStoredTrips()
+  const updatedTrips = trips.map((t) =>
+    t.id === tripId ? { ...t, ...updates, updatedAt: new Date() } : t
+  )
+  setStoredTrips(updatedTrips)
+
+  let publishOk = true
+  let error: string | undefined
+
+  const updated = updatedTrips.find((t) => t.id === tripId)
+  if (updated?.isPublic) {
+    try {
+      await apiUpdateTrip(updated)
+    } catch (e: any) {
+      publishOk = false
+      error = e?.message || `Failed to sync trip ${tripId} to server`
+      // local is updated; caller can surface error
+    }
+  }
+
+  return { publishOk, error }
+}
+
 export const deleteTrip = async (tripId: string): Promise<void> => {
   const trips = getStoredTrips()
   const trip = trips.find((t) => t.id === tripId)
@@ -228,14 +282,54 @@ export const getUserTrips = async (userId: string): Promise<Trip[]> => {
     .filter((trip) => trip.ownerId === userId)
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
 }
+export const createTripWithStatus = async (
+  tripData: Omit<Trip, "id" | "createdAt" | "updatedAt">
+): Promise<{ id: string; publishOk: boolean; error?: string }> => {
+  const trips = getStoredTrips()
+  const now = new Date()
+  const newTrip: Trip = {
+    ...tripData,
+    id: `trip-${Date.now()}`,
+    createdAt: now,
+    updatedAt: now,
+  }
+  setStoredTrips([...trips, newTrip])
+
+  let publishOk = true
+  let error: string | undefined
+
+  // Try to publish if marked public (best-effort)
+  if (newTrip.isPublic) {
+    try {
+      // If TRIP_API_ENABLED is off or fetch is undefined, apiPublishTrip will no-op
+      await apiPublishTrip(newTrip)
+    } catch (e: any) {
+      publishOk = false
+      error = e?.message || "Failed to publish to server"
+    }
+  }
+
+  return { id: newTrip.id, publishOk, error }
+}
 
 // Kept for backwards-compat (local-only “public”)
+// Kept for backwards-compat; now tries server first, falls back to local
 export const getPublicTrips = async (): Promise<Trip[]> => {
-  const trips = getStoredTrips()
-  return trips
+  // Try server (if enabled)
+  const remote = await apiListTrips()
+  if (remote && remote.length) {
+    return remote
+      .filter((trip) => trip.isPublic)
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+  }
+
+  // Fallback to local storage “draft public” trips
+  const local = getStoredTrips()
+  return local
     .filter((trip) => trip.isPublic)
-    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
 }
+
 
 // NEW: simple helper to list all trips (for anonymous/open mode)
 export const getAllTrips = async (): Promise<Trip[]> => {

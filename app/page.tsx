@@ -291,9 +291,9 @@ export default function HomePage(){
       {/* About Section */}
       <section className="py-16 px-4 bg-muted/30">
         <div className="container mx-auto max-w-4xl text-center">
-          <h2 className="text-3xl font-bold mb-6">About Harii Timor</h2>
+          <h2 className="text-3xl font-bold mb-6">About Planeador viajen Timor</h2>
           <p className="text-lg text-muted-foreground mb-8 text-pretty">
-            Harii Timor is a community-driven platform dedicated to preserving and sharing the rich history, culture,
+            Planeador viajen Timor is a community-driven platform dedicated to preserving and sharing the rich history, culture,
             and stories of Timor-Leste. From ancient historical sites to vibrant cultural traditions, discover the
             places that make our nation unique.
           </p>

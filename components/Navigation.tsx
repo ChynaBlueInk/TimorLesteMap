@@ -49,11 +49,10 @@ export default function Navigation() {
           {/* Logo / Brand */}
           <Link href="/" className="flex items-center gap-2">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/15 ring-1 ring-white/30 backdrop-blur-sm">
-              <span className="text-sm font-bold">HT</span>
+              <span className="text-sm font-bold">PVT</span>
             </div>
             <span className="hidden text-lg font-semibold drop-shadow sm:block">
-              Harii Timor
-            </span>
+Planeador viajen Timor            </span>
           </Link>
 
           {/* Desktop Nav */}
