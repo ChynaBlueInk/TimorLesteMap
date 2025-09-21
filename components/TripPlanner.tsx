@@ -3,6 +3,7 @@
 
 import { useState, useEffect, useMemo } from "react"
 import { getPlaces, type Place } from "@/lib/firestore"
+
 import {
   createTrip,
   updateTrip,
@@ -27,6 +28,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd"
 import TripPhotosUploader, { type TripPhoto } from "@/components/TripPhotosUploader"
 import { Plus, X, MapPin, Clock, Route, Save, GripVertical, AlertCircle, Calendar, Car, Pin, Search, Pencil } from "lucide-react"
+import { createTripWithStatus, updateTripWithStatus, /* existing imports… */ } from "@/lib/trips"
+import TripRouteMap from "@/components/TripRouteMap"
 
 // --- Map picker (react-leaflet) ---
 import "leaflet/dist/leaflet.css"
@@ -79,6 +82,7 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
   const [tripName, setTripName] = useState(trip?.name || "")
   const [tripDescription, setTripDescription] = useState(trip?.description || "")
   const [isPublic, setIsPublic] = useState(trip?.isPublic || false)
+const [publishError, setPublishError] = useState<string | null>(null)
 
   // Photos state (seed from existing trip if present)
   const [tripPhotos, setTripPhotos] = useState<TripPhoto[]>(trip?.tripPhotos ?? [])
@@ -166,6 +170,13 @@ export default function TripPlanner({ trip, language = "en", onSave, onCancel }:
 
   const closeStopEditor = () => setStopEditor(null)
 
+{publishError && (
+  <Alert variant="destructive" className="my-2">
+    <AlertDescription>
+      {publishError} — The trip is saved locally, but didn’t sync to the server. You can retry from the Trips page later.
+    </AlertDescription>
+  </Alert>
+)}
 
 // ---- Insert Stop (between cards) State / Helpers ----
 type InsertModalState = {
@@ -529,66 +540,96 @@ const handleDragEnd = async (result: any) => {
     return calculateTripStats(statsTrip, { startCoords, endCoords })
   }, [statsTrip, startCoords, endCoords])
 
-  const handleSave = async () => {
-    if (!tripName.trim()) {
-      setError("Trip name is required")
+// Route waypoints for TripRouteMap (used in render)
+const routeWaypoints = useMemo(() => {
+  const pts: { lat: number; lng: number }[] = []
+  // Start: include Dili if selected
+  if (startKey === "dili") {
+    pts.push(START_PRESETS.dili.coords)
+  }
+  // Trip stops in order
+  selectedPlaces.forEach(tp => {
+    if (tp.place?.coords) pts.push(tp.place.coords)
+  })
+  // Custom end if valid
+  const lat = endLat ? Number(endLat) : NaN
+  const lng = endLng ? Number(endLng) : NaN
+  if (useCustomEnd && Number.isFinite(lat) && Number.isFinite(lng)) {
+    pts.push({ lat, lng })
+  }
+  return pts
+}, [startKey, selectedPlaces, useCustomEnd, endLat, endLng])
+
+const handleSave = async () => {
+  if (!tripName.trim()) {
+    setError("Trip name is required")
+    return
+  }
+  if (selectedPlaces.length === 0) {
+    setError("Please add at least one place to your trip")
+    return
+  }
+
+  // validate override numeric inputs
+  if (useOverride) {
+    if (overrideKm !== "" && isNaN(parseFloat(overrideKm))) {
+      setError("Override distance must be a number")
       return
     }
-    if (selectedPlaces.length === 0) {
-      setError("Please add at least one place to your trip")
+    if (overrideHr !== "" && isNaN(parseFloat(overrideHr))) {
+      setError("Override time must be a number")
       return
-    }
-    // validate override numeric inputs
-    if (useOverride) {
-      if (overrideKm !== "" && isNaN(parseFloat(overrideKm))) {
-        setError("Override distance must be a number")
-        return
-      }
-      if (overrideHr !== "" && isNaN(parseFloat(overrideHr))) {
-        setError("Override time must be a number")
-        return
-      }
-    }
-
-    setLoading(true)
-    setError("")
-    try {
-      const payload: Omit<Trip, "id" | "createdAt" | "updatedAt"> = {
-        name: tripName.trim(),
-        description: tripDescription.trim(),
-        places: selectedPlaces,
-        ownerId: "anonymous",
-        isPublic,
-        transportMode,
-        roadCondition,
-        startKey,
-        customEndName: endName || undefined,
-        customEndCoords:
-          endLat && endLng && !isNaN(parseFloat(endLat)) && !isNaN(parseFloat(endLng))
-            ? { lat: parseFloat(endLat), lng: parseFloat(endLng) }
-            : undefined,
-        overrideDistanceKm: useOverride && overrideKm !== "" ? parseFloat(overrideKm) : undefined,
-        overrideTimeHours: useOverride && overrideHr !== "" ? parseFloat(overrideHr) : undefined,
-      }
-
-      if (trip?.id) {
-        await updateTrip(trip.id, payload)
-        onSave?.({ ...trip, ...payload, updatedAt: new Date() })
-      } else {
-        const { id } = await createTrip(payload)
-        onSave?.({
-          ...payload,
-          id,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        })
-      }
-    } catch (e: any) {
-      setError(e?.message || "Failed to save trip")
-    } finally {
-      setLoading(false)
     }
   }
+
+  setLoading(true)
+  setError("")
+  try {
+    // Ensure each stop has a sequential 'order' value
+    const placesWithOrder: TripPlace[] = selectedPlaces.map((p, idx) => ({
+      ...p,
+      order: idx,
+    }))
+
+    const parsedLat = endLat !== "" ? parseFloat(endLat) : NaN
+    const parsedLng = endLng !== "" ? parseFloat(endLng) : NaN
+    const hasValidEnd = !isNaN(parsedLat) && !isNaN(parsedLng)
+
+    const payload: Omit<Trip, "id" | "createdAt" | "updatedAt"> = {
+      name: tripName.trim(),
+      description: tripDescription.trim(),
+      places: placesWithOrder,
+      ownerId: "anonymous", // replace if you wire auth
+      isPublic,
+      transportMode,
+      roadCondition,
+      startKey,
+      customEndName: useCustomEnd ? (endName || undefined) : undefined,
+      customEndCoords: useCustomEnd && hasValidEnd ? { lat: parsedLat, lng: parsedLng } : undefined,
+      overrideDistanceKm: useOverride && overrideKm !== "" ? parseFloat(overrideKm) : undefined,
+      overrideTimeHours: useOverride && overrideHr !== "" ? parseFloat(overrideHr) : undefined,
+
+      // NEW: include trip photos
+      tripPhotos, // from TripPhotosUploader state
+    }
+
+    if (trip?.id) {
+const { publishOk, error } = await updateTripWithStatus(trip.id, payload)
+if (!publishOk) setPublishError(error || "Failed to publish updates to server")
+onSave?.({ ...trip, ...payload, updatedAt: new Date() })
+
+    } else {
+ const { id, publishOk, error } = await createTripWithStatus(payload as any)
+if (!publishOk) setPublishError(error || "Failed to publish trip to server")
+onSave?.({ ...payload, id, createdAt: new Date(), updatedAt: new Date() })
+
+    }
+  } catch (e: any) {
+    setError(e?.message || "Failed to save trip")
+  } finally {
+    setLoading(false)
+  }
+}
 
   const categories = [
     { value: "all", label: "All Categories" },
@@ -945,343 +986,364 @@ return (
         </Tabs>
       </TabsContent>
 
-  {/* -------------------- ITINERARY TAB -------------------- */}
-      <TabsContent value="itinerary" className="space-y-4">
-        {tripStats && (
-          <Card>
-            <CardHeader><CardTitle>Trip Overview</CardTitle></CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="flex items-center gap-2">
-                  <Route className="h-4 w-4 text-muted-foreground" />
-                  <div>
-                    <p className="text-sm font-medium">{Math.round(tripStats.totalDistance)} km</p>
-                    <p className="text-xs text-muted-foreground">Total Distance</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Car className="h-4 w-4 text-muted-foreground" />
-                  <div>
-                    <p className="text-sm font-medium">{Math.round(tripStats.totalTime)} hours</p>
-                    <p className="text-xs text-muted-foreground">Travel Time</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Calendar className="h-4 w-4 text-muted-foreground" />
-                  <div>
-                    <p className="text-sm font-medium">{tripStats.estimatedDays} days</p>
-                    <p className="text-xs text-muted-foreground">Recommended Duration</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-4 text-xs text-muted-foreground">
-                Start: <span className="font-medium">{startKey === "none" ? "First stop" : "Dili"}</span>
-                {endCoords && endName ? <> • End: <span className="font-medium">{endName}</span></> : null}
-                {" "}• Mode: <span className="font-medium capitalize">{transportMode}</span>
-                {" "}• Roads: <span className="font-medium capitalize">{roadCondition}</span>
-                {useOverride ? <> • (Using overrides)</> : null}
-              </div>
-            </CardContent>
-          </Card>
+     {/* -------------------- ITINERARY TAB -------------------- */}
+  <TabsContent value="itinerary" className="space-y-4">
+    {/* Trip Map (roads-following route) */}
+    <Card>
+      <CardHeader><CardTitle>Trip Map</CardTitle></CardHeader>
+      <CardContent>
+        {routeWaypoints.length >= 2 ? (
+          <div className="h-[360px] rounded overflow-hidden">
+            <TripRouteMap
+              waypoints={routeWaypoints}
+              transportMode={transportMode}
+            />
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Add at least two points (start + one stop, or two stops) to see a route.
+          </p>
         )}
+      </CardContent>
+    </Card>
 
-        {/* Itinerary builder */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Your Itinerary ({selectedPlaces.length} places)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {selectedPlaces.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <MapPin className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p>No places added yet</p>
-                <p className="text-sm">Switch to "Select Places" tab to add destinations</p>
-              </div>
-            ) : (
-              <DragDropContext onDragEnd={handleDragEnd}>
-                <Droppable droppableId="trip-places">
-                  {(provided) => (
-                    <div {...provided.droppableProps} ref={provided.innerRef} className="space-y-3">
-                      {/* Add at start */}
-                      <div className="flex justify-center">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openInsertAt(0)}
-                          className="border-dashed"
-                          title="Insert a stop at the very beginning"
-                        >
-                          <Plus className="mr-2 h-3.5 w-3.5" />
-                          Add stop at start
-                        </Button>
-                      </div>
-
-                      {selectedPlaces.map((tp, index) => (
-                        <div key={tp.placeId}>
-                          <Draggable draggableId={tp.placeId} index={index}>
-                            {(provided) => (
-                              <Card ref={provided.innerRef} {...provided.draggableProps} className="relative">
-                                <CardContent className="p-4">
-                                  <div className="flex items-start gap-3">
-                                    <div
-                                      {...provided.dragHandleProps}
-                                      className="flex items-center justify-center w-8 h-8 bg-muted rounded cursor-grab"
-                                      title="Drag to reorder"
-                                    >
-                                      <GripVertical className="h-4 w-4" />
-                                    </div>
-
-                                    <div className="flex-1">
-                                      <div className="flex items-start justify-between mb-2">
-                                        <div>
-                                          <h3 className="font-medium">
-                                            {tp.place.title}
-                                            {tp.place.id?.startsWith("custom-") && (
-                                              <span className="ml-2 rounded bg-amber-50 px-2 py-0.5 text-xs text-amber-700 border border-amber-200">
-                                                Custom pin
-                                              </span>
-                                            )}
-                                          </h3>
-                                          <p className="text-sm text-muted-foreground">
-                                            {tp.place.municipality ?? "Unknown"} • {t(safeCategoryKey(tp.place.category))}
-                                          </p>
-                                          {tp.place.id?.startsWith("custom-") && (
-                                            <p className="mt-1 text-xs text-muted-foreground">
-                                              {tp.place.coords?.lat?.toFixed?.(4)}, {tp.place.coords?.lng?.toFixed?.(4)}
-                                            </p>
-                                          )}
-                                        </div>
-
-                                        <div className="flex items-center gap-2">
-                                          <Badge variant="outline" className="text-xs">Stop {index + 1}</Badge>
-                                          <Button size="sm" variant="outline" onClick={() => openStopEditor(index)} title="Edit stop">
-                                            <Pencil className="h-3 w-3 mr-1" /> Edit
-                                          </Button>
-                                          <Button size="sm" variant="ghost" onClick={() => removePlace(tp.placeId)} title="Remove stop">
-                                            <X className="h-3 w-3" />
-                                          </Button>
-                                        </div>
-                                      </div>
-
-                                      <Textarea
-                                        placeholder="Add notes for this stop..."
-                                        value={tp.notes || ""}
-                                        onChange={(e) => updatePlaceNotes(tp.placeId, e.target.value)}
-                                        rows={2}
-                                        className="text-sm"
-                                      />
-                                    </div>
-                                  </div>
-                                </CardContent>
-                              </Card>
-                            )}
-                          </Draggable>
-
-                          {/* Add between items (after each index) */}
-                          <div className="mt-2 flex justify-center">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => openInsertAt(index + 1)}
-                              className="border-dashed"
-                              title="Insert a stop after this position"
-                            >
-                              <Plus className="mr-2 h-3.5 w-3.5" />
-                              Add stop here
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-
-                      {provided.placeholder}
-
-                      {/* Add at end (explicit) */}
-                      <div className="flex justify-center">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openInsertAt(selectedPlaces.length)}
-                          className="border-dashed"
-                          title="Insert a stop at the very end"
-                        >
-                          <Plus className="mr-2 h-3.5 w-3.5" />
-                          Add stop at end
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </Droppable>
-              </DragDropContext>
-            )}
-          </CardContent>
-        </Card>
-      </TabsContent>
-    </Tabs>
-
-    {/* Insert Stop Modal */}
-    {insertModal && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-        <div className="w-full max-w-2xl rounded-lg bg-white shadow-lg">
-          <div className="border-b px-4 py-3 flex items-center justify-between">
-            <h3 className="text-base font-semibold">
-              Insert stop at position {insertModal.index + 1}
-            </h3>
-            <Button variant="ghost" size="sm" onClick={closeInsert}>Close</Button>
-          </div>
-
-          <div className="p-4 space-y-4">
-            {/* Mode toggle */}
+    {/* Trip Overview */}
+    {tripStats && (
+      <Card>
+        <CardHeader><CardTitle>Trip Overview</CardTitle></CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                variant={insertModal.mode === "existing" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setInsertModal(m => m ? { ...m, mode: "existing" } : m)}
-              >
-                Choose existing place
-              </Button>
-              <Button
-                type="button"
-                variant={insertModal.mode === "custom" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setInsertModal(m => m ? { ...m, mode: "custom" } : m)}
-              >
-                Add custom pin
-              </Button>
+              <Route className="h-4 w-4 text-muted-foreground" />
+              <div>
+                <p className="text-sm font-medium">{Math.round(tripStats.totalDistance)} km</p>
+                <p className="text-xs text-muted-foreground">Total Distance</p>
+              </div>
             </div>
-
-            {/* Existing place picker */}
-            {insertModal.mode === "existing" && (
-              <div className="space-y-3">
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="Search places by name..."
-                    value={insertModal.search}
-                    onChange={(e) =>
-                      setInsertModal(m => m ? { ...m, search: e.target.value } : m)
-                    }
-                  />
-                </div>
-                <div className="max-h-72 overflow-y-auto rounded border">
-                  {availablePlaces
-                    .filter(p =>
-                      insertModal.search.trim() === "" ||
-                      p.title.toLowerCase().includes(insertModal.search.toLowerCase())
-                    )
-                    .slice(0, 100)
-                    .map((p) => (
-                      <div
-                        key={p.id}
-                        className="flex items-center justify-between px-3 py-2 border-b last:border-b-0 hover:bg-muted/40"
-                      >
-                        <div>
-                          <p className="text-sm font-medium">{p.title}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {(p.municipality ?? "Unknown")} • {t(safeCategoryKey(p.category))}
-                          </p>
-                        </div>
-                        <Button
-                          size="sm"
-                          onClick={() => insertPlaceAt(insertModal.index, p)}
-                          title="Insert this place at the selected position"
-                        >
-                          Insert
-                        </Button>
-                      </div>
-                    ))}
-                  {availablePlaces.length === 0 && (
-                    <div className="p-4 text-sm text-muted-foreground">
-                      No places loaded yet.
-                    </div>
-                  )}
-                </div>
+            <div className="flex items-center gap-2">
+              <Car className="h-4 w-4 text-muted-foreground" />
+              <div>
+                <p className="text-sm font-medium">{Math.round(tripStats.totalTime)} hours</p>
+                <p className="text-xs text-muted-foreground">Travel Time</p>
               </div>
-            )}
-
-            {/* Custom pin form */}
-            {insertModal.mode === "custom" && (
-              <div className="grid gap-3 md:grid-cols-3">
-                <div className="md:col-span-3 space-y-1">
-                  <Label htmlFor="insTitle">Name/Label</Label>
-                  <Input
-                    id="insTitle"
-                    value={insertModal.title}
-                    onChange={(e) =>
-                      setInsertModal(m => m ? { ...m, title: e.target.value } : m)
-                    }
-                    placeholder="e.g., Scenic lookout"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="insLat">Latitude</Label>
-                  <Input
-                    id="insLat"
-                    value={insertModal.lat}
-                    onChange={(e) =>
-                      setInsertModal(m => m ? { ...m, lat: e.target.value } : m)
-                    }
-                    placeholder="-8.5586"
-                    inputMode="decimal"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="insLng">Longitude</Label>
-                  <Input
-                    id="insLng"
-                    value={insertModal.lng}
-                    onChange={(e) =>
-                      setInsertModal(m => m ? { ...m, lng: e.target.value } : m)
-                    }
-                    placeholder="125.5736"
-                    inputMode="decimal"
-                  />
-                </div>
-                <div className="md:col-span-3">
-                  <Button
-                    onClick={() => {
-                      const lat = Number(insertModal.lat)
-                      const lng = Number(insertModal.lng)
-                      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
-                      addCustomStopAt(insertModal.index, { lat, lng }, insertModal.title)
-                    }}
-                    disabled={
-                      !insertModal.lat || !insertModal.lng ||
-                      !Number.isFinite(Number(insertModal.lat)) ||
-                      !Number.isFinite(Number(insertModal.lng))
-                    }
-                  >
-                    Insert custom stop
-                  </Button>
-                </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Calendar className="h-4 w-4 text-muted-foreground" />
+              <div>
+                <p className="text-sm font-medium">{tripStats.estimatedDays} days</p>
+                <p className="text-xs text-muted-foreground">Recommended Duration</p>
               </div>
-            )}
+            </div>
           </div>
-        </div>
-      </div>
+
+          <div className="mt-4 text-xs text-muted-foreground">
+            Start: <span className="font-medium">{startKey === "none" ? "First stop" : "Dili"}</span>
+            {endCoords && endName ? <> • End: <span className="font-medium">{endName}</span></> : null}
+            {" "}• Mode: <span className="font-medium capitalize">{transportMode}</span>
+            {" "}• Roads: <span className="font-medium capitalize">{roadCondition}</span>
+            {useOverride ? <> • (Using overrides)</> : null}
+          </div>
+        </CardContent>
+      </Card>
     )}
 
-    {/* Actions */}
-    <div className="flex gap-4">
-      <Button onClick={handleSave} disabled={loading} className="flex-1">
-        {loading ? (
-          <>
-            <Clock className="mr-2 h-4 w-4 animate-spin" />
-            Saving...
-          </>
+    {/* Itinerary builder */}
+    <Card>
+      <CardHeader>
+        <CardTitle>Your Itinerary ({selectedPlaces.length} places)</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {selectedPlaces.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground">
+            <MapPin className="h-12 w-12 mx-auto mb-4 opacity-50" />
+            <p>No places added yet</p>
+            <p className="text-sm">Switch to "Select Places" tab to add destinations</p>
+          </div>
         ) : (
-          <>
-            <Save className="mr-2 h-4 w-4" />
-            {trip ? "Update Trip" : "Save Trip"}
-          </>
+          <DragDropContext onDragEnd={handleDragEnd}>
+            <Droppable droppableId="trip-places">
+              {(provided) => (
+                <div {...provided.droppableProps} ref={provided.innerRef} className="space-y-3">
+                  {/* Add at start */}
+                  <div className="flex justify-center">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openInsertAt(0)}
+                      className="border-dashed"
+                      title="Insert a stop at the very beginning"
+                    >
+                      <Plus className="mr-2 h-3.5 w-3.5" />
+                      Add stop at start
+                    </Button>
+                  </div>
+
+                  {selectedPlaces.map((tp, index) => (
+                    <div key={tp.placeId}>
+                      <Draggable draggableId={tp.placeId} index={index}>
+                        {(provided) => (
+                          <Card ref={provided.innerRef} {...provided.draggableProps} className="relative">
+                            <CardContent className="p-4">
+                              <div className="flex items-start gap-3">
+                                <div
+                                  {...provided.dragHandleProps}
+                                  className="flex items-center justify-center w-8 h-8 bg-muted rounded cursor-grab"
+                                  title="Drag to reorder"
+                                >
+                                  <GripVertical className="h-4 w-4" />
+                                </div>
+
+                                <div className="flex-1">
+                                  <div className="flex items-start justify-between mb-2">
+                                    <div>
+                                      <h3 className="font-medium">
+                                        {tp.place.title}
+                                        {tp.place.id?.startsWith("custom-") && (
+                                          <span className="ml-2 rounded bg-amber-50 px-2 py-0.5 text-xs text-amber-700 border border-amber-200">
+                                            Custom pin
+                                          </span>
+                                        )}
+                                      </h3>
+                                      <p className="text-sm text-muted-foreground">
+                                        {tp.place.municipality ?? "Unknown"} • {t(safeCategoryKey(tp.place.category))}
+                                      </p>
+                                      {tp.place.id?.startsWith("custom-") && (
+                                        <p className="mt-1 text-xs text-muted-foreground">
+                                          {tp.place.coords?.lat?.toFixed?.(4)}, {tp.place.coords?.lng?.toFixed?.(4)}
+                                        </p>
+                                      )}
+                                    </div>
+
+                                    <div className="flex items-center gap-2">
+                                      <Badge variant="outline" className="text-xs">Stop {index + 1}</Badge>
+                                      <Button size="sm" variant="outline" onClick={() => openStopEditor(index)} title="Edit stop">
+                                        <Pencil className="h-3 w-3 mr-1" /> Edit
+                                      </Button>
+                                      <Button size="sm" variant="ghost" onClick={() => removePlace(tp.placeId)} title="Remove stop">
+                                        <X className="h-3 w-3" />
+                                      </Button>
+                                    </div>
+                                  </div>
+
+                                  <Textarea
+                                    placeholder="Add notes for this stop..."
+                                    value={tp.notes || ""}
+                                    onChange={(e) => updatePlaceNotes(tp.placeId, e.target.value)}
+                                    rows={2}
+                                    className="text-sm"
+                                  />
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        )}
+                      </Draggable>
+
+                      {/* Add between items (after each index) */}
+                      <div className="mt-2 flex justify-center">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => openInsertAt(index + 1)}
+                          className="border-dashed"
+                          title="Insert a stop after this position"
+                        >
+                          <Plus className="mr-2 h-3.5 w-3.5" />
+                          Add stop here
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+
+                  {provided.placeholder}
+
+                  {/* Add at end (explicit) */}
+                  <div className="flex justify-center">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openInsertAt(selectedPlaces.length)}
+                      className="border-dashed"
+                      title="Insert a stop at the very end"
+                    >
+                      <Plus className="mr-2 h-3.5 w-3.5" />
+                      Add stop at end
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </Droppable>
+          </DragDropContext>
         )}
-      </Button>
-      {onCancel && (
-        <Button variant="outline" onClick={onCancel}>
-          Cancel
-        </Button>
-      )}
+      </CardContent>
+    </Card>
+  </TabsContent>
+</Tabs>
+
+{/* Insert Stop Modal */}
+{insertModal && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+    <div className="w-full max-w-2xl rounded-lg bg-white shadow-lg">
+      <div className="border-b px-4 py-3 flex items-center justify-between">
+        <h3 className="text-base font-semibold">
+          Insert stop at position {insertModal.index + 1}
+        </h3>
+        <Button variant="ghost" size="sm" onClick={closeInsert}>Close</Button>
+      </div>
+
+      <div className="p-4 space-y-4">
+        {/* Mode toggle */}
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant={insertModal.mode === "existing" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setInsertModal(m => m ? { ...m, mode: "existing" } : m)}
+          >
+            Choose existing place
+          </Button>
+          <Button
+            type="button"
+            variant={insertModal.mode === "custom" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setInsertModal(m => m ? { ...m, mode: "custom" } : m)}
+          >
+            Add custom pin
+          </Button>
+        </div>
+
+        {/* Existing place picker */}
+        {insertModal.mode === "existing" && (
+          <div className="space-y-3">
+            <div className="flex gap-2">
+              <Input
+                placeholder="Search places by name..."
+                value={insertModal.search}
+                onChange={(e) =>
+                  setInsertModal(m => m ? { ...m, search: e.target.value } : m)
+                }
+              />
+            </div>
+            <div className="max-h-72 overflow-y-auto rounded border">
+              {availablePlaces
+                .filter(p =>
+                  insertModal.search.trim() === "" ||
+                  p.title.toLowerCase().includes(insertModal.search.toLowerCase())
+                )
+                .slice(0, 100)
+                .map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex items-center justify-between px-3 py-2 border-b last:border-b-0 hover:bg-muted/40"
+                  >
+                    <div>
+                      <p className="text-sm font-medium">{p.title}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {(p.municipality ?? "Unknown")} • {t(safeCategoryKey(p.category))}
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      onClick={() => insertPlaceAt(insertModal.index, p)}
+                      title="Insert this place at the selected position"
+                    >
+                      Insert
+                    </Button>
+                  </div>
+                ))}
+              {availablePlaces.length === 0 && (
+                <div className="p-4 text-sm text-muted-foreground">
+                  No places loaded yet.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Custom pin form */}
+        {insertModal.mode === "custom" && (
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="md:col-span-3 space-y-1">
+              <Label htmlFor="insTitle">Name/Label</Label>
+              <Input
+                id="insTitle"
+                value={insertModal.title}
+                onChange={(e) =>
+                  setInsertModal(m => m ? { ...m, title: e.target.value } : m)
+                }
+                placeholder="e.g., Scenic lookout"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="insLat">Latitude</Label>
+              <Input
+                id="insLat"
+                value={insertModal.lat}
+                onChange={(e) =>
+                  setInsertModal(m => m ? { ...m, lat: e.target.value } : m)
+                }
+                placeholder="-8.5586"
+                inputMode="decimal"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="insLng">Longitude</Label>
+              <Input
+                id="insLng"
+                value={insertModal.lng}
+                onChange={(e) =>
+                  setInsertModal(m => m ? { ...m, lng: e.target.value } : m)
+                }
+                placeholder="125.5736"
+                inputMode="decimal"
+              />
+            </div>
+            <div className="md:col-span-3">
+              <Button
+                onClick={() => {
+                  const lat = Number(insertModal.lat)
+                  const lng = Number(insertModal.lng)
+                  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+                  addCustomStopAt(insertModal.index, { lat, lng }, insertModal.title)
+                }}
+                disabled={
+                  !insertModal.lat || !insertModal.lng ||
+                  !Number.isFinite(Number(insertModal.lat)) ||
+                  !Number.isFinite(Number(insertModal.lng))
+                }
+              >
+                Insert custom stop
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
+  </div>
+)}
+
+{/* Actions */}
+<div className="flex gap-4">
+  <Button onClick={handleSave} disabled={loading} className="flex-1">
+    {loading ? (
+      <>
+        <Clock className="mr-2 h-4 w-4 animate-spin" />
+        Saving...
+      </>
+    ) : (
+      <>
+        <Save className="mr-2 h-4 w-4" />
+        {trip ? "Update Trip" : "Save Trip"}
+      </>
+    )}
+  </Button>
+  {onCancel && (
+    <Button variant="outline" onClick={onCancel}>
+      Cancel
+    </Button>
+  )}
+</div>
+
 
     {/* ---- Stop Editor Modal ---- */}
     {stopEditor && (

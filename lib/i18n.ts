@@ -11,7 +11,7 @@ export const translations = {
     "nav.signOut": "Sign Out",
 
     // Home page
-    "home.title": "Harii Timor: Places & Histories",
+    "home.title": "Planeador viajen Timor: Places & Histories",
     "home.subtitle": "Discover the rich history and culture of Timor-Leste",
     "home.searchPlaceholder": "Search places, municipalities, or keywords...",
     "home.browseMap": "Browse Map",
@@ -155,7 +155,7 @@ export const translations = {
     "nav.signOut": "Logout",
 
     // Home page
-    "home.title": "Harii Timor: Fatin no Istória",
+    "home.title": "Planeador viajen Timor: Fatin no Istória",
     "home.subtitle": "Deskobre istória no kultura riku husi Timor-Leste",
     "home.searchPlaceholder": "Buka fatin, munisípiu, ka liafuan...",
     "home.browseMap": "Haree Mapa",
@@ -299,7 +299,7 @@ export const translations = {
     "nav.signOut": "Sair",
 
     // Home page
-    "home.title": "Harii Timor: Lugares e Histórias",
+    "home.title": "Planeador viajen Timor: Lugares e Histórias",
     "home.subtitle": "Descubra a rica história e cultura de Timor-Leste",
     "home.searchPlaceholder": "Pesquisar lugares, municípios ou palavras-chave...",
     "home.browseMap": "Explorar Mapa",

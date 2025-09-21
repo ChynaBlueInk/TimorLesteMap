@@ -12,7 +12,7 @@ import "./globals.css";
 const Navigation = dynamic(() => import("@/components/Navigation"), { ssr: false });
 
 export const metadata: Metadata = {
-  title: "Harii Timor: Places & Histories",
+  title: "Planeador viajen Timor: Places & Histories",
   description:
     "Discover the rich history and culture of Timor-Leste through interactive maps and community stories",
   generator: "v0.app",
