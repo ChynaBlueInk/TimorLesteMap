@@ -1,4 +1,5 @@
-﻿"use client";
+﻿// app/trips/[id]/client.tsx
+"use client";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -20,35 +21,55 @@ export default function TripDetailClient({ id }: { id: string }) {
       setLoading(true);
       setError(undefined);
       try {
-        // 1) Try local (user's own or recently edited)
-        const local = await getTrip(id);
-        if (!cancelled && local) {
-          setTrip(local);
-          return;
-        }
-
-        // 2) Fallback to server public trips
-        const res = await fetch(`/api/trips/${encodeURIComponent(id)}`, { cache: "no-store" });
+        // 1) Try SERVER first so public trips work across devices
+        const base = process.env.NEXT_PUBLIC_BASE_URL || "";
+        const res = await fetch(`${base}/api/trips/${encodeURIComponent(id)}`, { cache: "no-store" });
         if (res.ok) {
           const raw = await res.json();
           const revived: Trip = {
             ...raw,
-            createdAt: new Date(raw.createdAt),
-            updatedAt: new Date(raw.updatedAt),
+            createdAt: raw?.createdAt ? new Date(raw.createdAt) : new Date(),
+            updatedAt: raw?.updatedAt ? new Date(raw.updatedAt) : new Date(),
           };
-          if (!cancelled) setTrip(revived);
-        } else {
-          if (!cancelled) setError("Trip not found.");
+          if (!cancelled) {
+            setTrip(revived);
+            setLoading(false);
+            return;
+          }
+        }
+
+        // 2) Fallback to LOCAL (user’s saved/private copy)
+        const local = await getTrip(id);
+        if (!cancelled) {
+          if (local) {
+            setTrip(local);
+          } else {
+            setError("Trip not found.");
+          }
+          setLoading(false);
         }
       } catch (e: any) {
-        if (!cancelled) setError(e?.message || "Failed to load trip.");
-      } finally {
-        if (!cancelled) setLoading(false);
+        // Final fallback to local if fetch failed
+        try {
+          const local = await getTrip(id);
+          if (!cancelled) {
+            if (local) setTrip(local);
+            else setError(e?.message || "Failed to load trip.");
+            setLoading(false);
+          }
+        } catch {
+          if (!cancelled) {
+            setError(e?.message || "Failed to load trip.");
+            setLoading(false);
+          }
+        }
       }
     };
 
     load();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   if (loading) {
@@ -70,7 +91,7 @@ export default function TripDetailClient({ id }: { id: string }) {
               <p className="text-muted-foreground">{error || "Trip not found."}</p>
               <div className="mt-4">
                 <Button asChild>
-                  <Link href="/trips">Back to Trips</Link>
+                  <Link href="/trips/public">Back to Public Trips</Link>
                 </Button>
               </div>
             </CardContent>
@@ -106,7 +127,8 @@ export default function TripDetailClient({ id }: { id: string }) {
                 const ok = window.confirm(`Delete trip "${trip.name}"? This cannot be undone.`);
                 if (!ok) return;
                 await deleteTrip(trip.id);
-                router.push("/trips");
+                // After deleting a user's own trip, go back to saved trips.
+                router.push("/trips/saved");
               }}
             >
               Delete
