@@ -6,7 +6,9 @@ export interface TripPlace {
   place: Place
   order: number
   notes?: string
+  photoUrl?: string // NEW: optional photo for this stop
 }
+
 
 export type TransportMode =
   | "car"

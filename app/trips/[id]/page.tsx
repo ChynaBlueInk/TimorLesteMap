@@ -3,7 +3,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
 import {
   getTrip,
   createTrip,
@@ -18,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertCircle, ArrowLeft, Calendar, Car, Copy, MapPin, Route } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
+import TripRouteMap from "@/components/TripRouteMap";
 
 type OriginInfo = {
   href: string;
@@ -28,7 +28,7 @@ type OriginInfo = {
 function useOriginInfo(): OriginInfo {
   const [info, setInfo] = useState<OriginInfo>({
     href: "/trips",
-    label: "Return to Trips",
+    label: "Return",
     canGoBack: false,
   });
 
@@ -42,9 +42,9 @@ function useOriginInfo(): OriginInfo {
       const sameOrigin = ref.startsWith(`${loc.origin}/`);
 
       const pick = (kind: "public" | "saved" | "all") => {
-        if (kind === "public") return { href: "/trips/public", label: "Return to Public Trips" };
-        if (kind === "saved") return { href: "/trips/saved", label: "Return to Saved Trips" };
-        return { href: "/trips", label: "Return to Trips" };
+        if (kind === "public") return { href: "/trips/public", label: "Return" };
+        if (kind === "saved") return { href: "/trips/saved", label: "Return" };
+        return { href: "/trips", label: "Return" };
       };
 
       let chosen = pick("all");
@@ -60,7 +60,7 @@ function useOriginInfo(): OriginInfo {
 
       setInfo({ ...chosen, canGoBack: sameOrigin });
     } catch {
-      setInfo({ href: "/trips", label: "Return to Trips", canGoBack: false });
+      setInfo({ href: "/trips", label: "Return", canGoBack: false });
     }
   }, []);
 
@@ -84,7 +84,7 @@ export default function TripDetailPage() {
       setLoading(true);
       setError(null);
       try {
-        // 1) Try SERVER first (works for public trips across devices)
+        // 1) Try SERVER first
         const base = process.env.NEXT_PUBLIC_BASE_URL || "";
         const res = await fetch(`${base}/api/trips/${encodeURIComponent(params.id)}`, {
           cache: "no-store",
@@ -100,7 +100,7 @@ export default function TripDetailPage() {
           return;
         }
 
-        // 2) Fallback to LOCAL (user’s own/saved trips)
+        // 2) Fallback to LOCAL
         const local = await getTrip(params.id);
         if (!local) {
           setError("Trip not found.");
@@ -130,6 +130,56 @@ export default function TripDetailPage() {
   const mode: TransportMode = trip?.transportMode ?? "car";
   const roads: RoadCondition = trip?.roadCondition ?? "mixed";
 
+  // Build route waypoints for the map (Dili start if selected → stops → custom end)
+  const waypoints = useMemo(() => {
+    if (!trip) return [] as { lat: number; lng: number }[];
+    const pts: { lat: number; lng: number }[] = [];
+    if (trip.startKey !== "none") {
+      pts.push({ lat: -8.5586, lng: 125.5736 }); // Dili
+    }
+    (trip.places ?? []).forEach((tp) => {
+      const c = tp.place?.coords;
+      if (c && Number.isFinite(c.lat) && Number.isFinite(c.lng)) pts.push({ lat: c.lat, lng: c.lng });
+    });
+    if (
+      trip.customEndCoords &&
+      Number.isFinite(trip.customEndCoords.lat) &&
+      Number.isFinite(trip.customEndCoords.lng)
+    ) {
+      pts.push(trip.customEndCoords);
+    }
+    return pts;
+  }, [trip]);
+
+  // Build markers with optional photo (place.images[0]) for map popups
+  const markers = useMemo(() => {
+    if (!trip) return [];
+    const ordered = [...(trip.places ?? [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    return ordered
+      .map((tp, idx) => {
+        const c = tp.place?.coords;
+        if (!c || !Number.isFinite(c.lat) || !Number.isFinite(c.lng)) return null;
+        const photoUrl =
+          (Array.isArray(tp.place?.images) && typeof tp.place.images[0] === "string"
+            ? tp.place.images[0]
+            : undefined) ?? undefined;
+        return {
+          id: tp.placeId || `stop-${idx}`,
+          title: tp.place?.title || `Stop ${idx + 1}`,
+          coords: { lat: c.lat, lng: c.lng },
+          photoUrl,
+          notes: tp.notes,
+        };
+      })
+      .filter(Boolean) as {
+      id: string;
+      title: string;
+      coords: { lat: number; lng: number };
+      photoUrl?: string;
+      notes?: string;
+    }[];
+  }, [trip]);
+
   const handleDuplicate = async () => {
     if (!trip) return;
     setDuplicating(true);
@@ -139,12 +189,14 @@ export default function TripDetailPage() {
       const payload = {
         name: copyName,
         description: trip.description ?? "",
-        places: trip.places, // same order & notes
+        places: trip.places,
         ownerId: "anonymous",
-        isPublic: false, // copies start private
+        isPublic: false,
         transportMode: mode,
         roadCondition: roads,
         estimatedDuration: (trip as any).estimatedDuration,
+        // keep photos on duplicate? Optional — uncomment if you want.
+        // tripPhotos: trip.tripPhotos ?? [],
       } as const;
 
       const { id } = await createTrip(payload as any);
@@ -156,12 +208,9 @@ export default function TripDetailPage() {
     }
   };
 
-  const goBack = () => {
-    if (origin.canGoBack) {
-      router.back();
-    } else {
-      router.push(origin.href);
-    }
+  const originNav = () => {
+    if (origin.canGoBack) router.back();
+    else router.push(origin.href);
   };
 
   if (loading) {
@@ -175,9 +224,9 @@ export default function TripDetailPage() {
   if (error || !trip) {
     return (
       <div className="container mx-auto px-4 py-8 space-y-4">
-        <Button variant="outline" onClick={goBack}>
+        <Button variant="outline" onClick={originNav}>
           <ArrowLeft className="mr-2 h-4 w-4" />
-          {origin.label}
+          Return
         </Button>
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
@@ -192,18 +241,24 @@ export default function TripDetailPage() {
       {/* Header actions */}
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
-          <Button variant="outline" className="mb-3" onClick={goBack}>
+          <Button variant="outline" className="mb-3" onClick={originNav}>
             <ArrowLeft className="mr-2 h-4 w-4" />
-            {origin.label}
+            Return
           </Button>
           <h1 className="text-3xl font-bold">{trip.name}</h1>
           {trip.description && (
             <p className="text-muted-foreground max-w-3xl">{trip.description}</p>
           )}
           <div className="flex flex-wrap items-center gap-2 pt-2">
-            <Badge variant="secondary" className="text-xs capitalize">{mode}</Badge>
-            <Badge variant="outline" className="text-xs capitalize">{roads}</Badge>
-            <Badge variant="outline" className="text-xs">{trip.places.length} stops</Badge>
+            <Badge variant="secondary" className="text-xs capitalize">
+              {mode}
+            </Badge>
+            <Badge variant="outline" className="text-xs capitalize">
+              {roads}
+            </Badge>
+            <Badge variant="outline" className="text-xs">
+              {trip.places.length} stops
+            </Badge>
             <span className="text-xs text-muted-foreground">
               Updated {new Date(trip.updatedAt).toLocaleDateString()}
             </span>
@@ -217,6 +272,58 @@ export default function TripDetailPage() {
           </Button>
         </div>
       </div>
+
+      {/* Photos */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Photos</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {Array.isArray(trip.tripPhotos) && trip.tripPhotos.length > 0 ? (
+            <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {trip.tripPhotos.map((p, i) => {
+                const url = typeof p?.url === "string" ? p.url : "";
+                if (!url) return null;
+                return (
+                  <li key={i} className="overflow-hidden rounded-lg border">
+                    {/* use <img> to avoid Next/Image remote config requirements */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={url}
+                      alt={p?.caption || `Photo ${i + 1}`}
+                      className="h-48 w-full object-cover"
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                    />
+                    {p?.caption ? (
+                      <div className="px-3 py-2 text-xs text-muted-foreground">{p.caption}</div>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">No photos yet.</p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Trip Map (now with markers + photo popups) */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Trip Map</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="h-[360px] rounded overflow-hidden">
+            <TripRouteMap waypoints={waypoints} transportMode={mode} markers={markers} />
+          </div>
+          {waypoints.length < 2 ? (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Add more stops to see the full route. The map still shows your current point(s).
+            </p>
+          ) : null}
+        </CardContent>
+      </Card>
 
       {/* Overview */}
       {stats && (
@@ -257,7 +364,7 @@ export default function TripDetailPage() {
         </Card>
       )}
 
-      {/* Itinerary */}
+      {/* Itinerary (now with small thumbnails) */}
       <Card>
         <CardHeader>
           <CardTitle>Itinerary</CardTitle>
@@ -270,27 +377,48 @@ export default function TripDetailPage() {
               {trip.places
                 .slice()
                 .sort((a, b) => a.order - b.order)
-                .map((tp, idx) => (
-                  <div key={tp.placeId} className="rounded border p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <Badge variant="outline" className="text-xs">Stop {idx + 1}</Badge>
-                          <h3 className="font-medium">{tp.place.title}</h3>
+                .map((tp, idx) => {
+                  const thumb =
+                    Array.isArray(tp.place?.images) && typeof tp.place.images[0] === "string"
+                      ? tp.place.images[0]
+                      : undefined;
+                  return (
+                    <div key={tp.placeId} className="rounded border p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3">
+                          {thumb ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={thumb}
+                              alt={tp.place.title || `Stop ${idx + 1}`}
+                              className="h-16 w-24 rounded object-cover"
+                              loading="lazy"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : null}
+
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="text-xs">
+                                Stop {idx + 1}
+                              </Badge>
+                              <h3 className="font-medium">{tp.place.title}</h3>
+                            </div>
+                            <p className="text-sm text-muted-foreground mt-1">
+                              <MapPin className="inline-block h-3 w-3 mr-1" />
+                              {tp.place.municipality ?? "Unknown"} • {renderCategory(t, tp.place.category)}
+                            </p>
+                          </div>
                         </div>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          <MapPin className="inline-block h-3 w-3 mr-1" />
-                          {tp.place.municipality ?? "Unknown"} • {renderCategory(t, tp.place.category)}
-                        </p>
                       </div>
+                      {tp.notes && (
+                        <p className="mt-2 text-sm">
+                          <span className="font-medium">Notes:</span> {tp.notes}
+                        </p>
+                      )}
                     </div>
-                    {tp.notes && (
-                      <p className="mt-2 text-sm">
-                        <span className="font-medium">Notes:</span> {tp.notes}
-                      </p>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
             </div>
           )}
         </CardContent>
@@ -302,11 +430,16 @@ export default function TripDetailPage() {
 // Helper to render category via i18n (safe keys only)
 function renderCategory(t: ReturnType<typeof useTranslation>["t"], cat: string) {
   const key =
-    cat === "history" ? "category.history" :
-    cat === "culture" ? "category.culture" :
-    cat === "nature" ? "category.nature" :
-    cat === "food" ? "category.food" :
-    cat === "memorials" ? "category.memorials" :
-    "category.nature";
+    cat === "history"
+      ? "category.history"
+      : cat === "culture"
+      ? "category.culture"
+      : cat === "nature"
+      ? "category.nature"
+      : cat === "food"
+      ? "category.food"
+      : cat === "memorials"
+      ? "category.memorials"
+      : "category.nature";
   return t(key);
 }
