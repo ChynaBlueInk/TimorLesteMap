@@ -1,9 +1,9 @@
 // app/trips/[id]/page.tsx
-"use client"
+"use client";
 
-import { useEffect, useMemo, useState } from "react"
-import { useParams, useRouter } from "next/navigation"
-import Link from "next/link"
+import { useEffect, useMemo, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   getTrip,
   createTrip,
@@ -11,98 +11,180 @@ import {
   type Trip,
   type TransportMode,
   type RoadCondition,
-} from "@/lib/trips"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { AlertCircle, ArrowLeft, Calendar, Car, Copy, MapPin, Route } from "lucide-react"
-import { useTranslation } from "@/lib/i18n"
+} from "@/lib/trips";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { AlertCircle, ArrowLeft, Calendar, Car, Copy, MapPin, Route } from "lucide-react";
+import { useTranslation } from "@/lib/i18n";
 
-export default function TripDetailPage() {
-  const params = useParams<{ id: string }>()
-  const router = useRouter()
-  const { t } = useTranslation()
+type OriginInfo = {
+  href: string;
+  label: string;
+  canGoBack: boolean;
+};
 
-  const [trip, setTrip] = useState<Trip | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [duplicating, setDuplicating] = useState(false)
+function useOriginInfo(): OriginInfo {
+  const [info, setInfo] = useState<OriginInfo>({
+    href: "/trips",
+    label: "Return to Trips",
+    canGoBack: false,
+  });
 
   useEffect(() => {
-    if (!params?.id) return
-    ;(async () => {
-      setLoading(true)
-      setError(null)
+    try {
+      const loc = window.location;
+      const params = new URLSearchParams(loc.search);
+      const forced = params.get("from"); // "public" | "saved" | "all"
+
+      const ref = document.referrer || "";
+      const sameOrigin = ref.startsWith(`${loc.origin}/`);
+
+      const pick = (kind: "public" | "saved" | "all") => {
+        if (kind === "public") return { href: "/trips/public", label: "Return to Public Trips" };
+        if (kind === "saved") return { href: "/trips/saved", label: "Return to Saved Trips" };
+        return { href: "/trips", label: "Return to Trips" };
+      };
+
+      let chosen = pick("all");
+
+      if (forced === "public") chosen = pick("public");
+      else if (forced === "saved") chosen = pick("saved");
+      else if (forced === "all") chosen = pick("all");
+      else if (sameOrigin) {
+        if (ref.includes("/trips/public")) chosen = pick("public");
+        else if (ref.includes("/trips/saved")) chosen = pick("saved");
+        else if (ref.includes("/trips")) chosen = pick("all");
+      }
+
+      setInfo({ ...chosen, canGoBack: sameOrigin });
+    } catch {
+      setInfo({ href: "/trips", label: "Return to Trips", canGoBack: false });
+    }
+  }, []);
+
+  return info;
+}
+
+export default function TripDetailPage() {
+  const params = useParams<{ id: string }>();
+  const router = useRouter();
+  const { t } = useTranslation();
+  const origin = useOriginInfo();
+
+  const [trip, setTrip] = useState<Trip | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [duplicating, setDuplicating] = useState(false);
+
+  useEffect(() => {
+    if (!params?.id) return;
+    (async () => {
+      setLoading(true);
+      setError(null);
       try {
-        const data = await getTrip(params.id)
-        if (!data) {
-          setError("Trip not found.")
+        // 1) Try SERVER first (works for public trips across devices)
+        const base = process.env.NEXT_PUBLIC_BASE_URL || "";
+        const res = await fetch(`${base}/api/trips/${encodeURIComponent(params.id)}`, {
+          cache: "no-store",
+        });
+        if (res.ok) {
+          const raw = await res.json();
+          const revived: Trip = {
+            ...raw,
+            createdAt: raw?.createdAt ? new Date(raw.createdAt) : new Date(),
+            updatedAt: raw?.updatedAt ? new Date(raw.updatedAt) : new Date(),
+          };
+          setTrip(revived);
+          return;
+        }
+
+        // 2) Fallback to LOCAL (user’s own/saved trips)
+        const local = await getTrip(params.id);
+        if (!local) {
+          setError("Trip not found.");
         } else {
-          setTrip(data)
+          setTrip(local);
         }
       } catch (e: any) {
-        setError(e?.message || "Failed to load trip.")
+        // Final fallback to local if fetch threw (e.g., offline)
+        try {
+          const local = await getTrip(params.id);
+          if (!local) {
+            setError(e?.message || "Failed to load trip.");
+          } else {
+            setTrip(local);
+          }
+        } catch {
+          setError(e?.message || "Failed to load trip.");
+        }
       } finally {
-        setLoading(false)
+        setLoading(false);
       }
-    })()
-  }, [params?.id])
+    })();
+  }, [params?.id]);
 
-  const stats = useMemo(() => (trip ? calculateTripStats(trip) : null), [trip])
+  const stats = useMemo(() => (trip ? calculateTripStats(trip) : null), [trip]);
 
-  const mode: TransportMode = trip?.transportMode ?? "car"
-  const roads: RoadCondition = trip?.roadCondition ?? "mixed"
+  const mode: TransportMode = trip?.transportMode ?? "car";
+  const roads: RoadCondition = trip?.roadCondition ?? "mixed";
 
   const handleDuplicate = async () => {
-    if (!trip) return
-    setDuplicating(true)
+    if (!trip) return;
+    setDuplicating(true);
     try {
-      const copyName = trip.name?.startsWith("Copy of ") ? trip.name : `Copy of ${trip.name}`
+      const copyName = trip.name?.startsWith("Copy of ") ? trip.name : `Copy of ${trip.name}`;
 
       const payload = {
         name: copyName,
         description: trip.description ?? "",
         places: trip.places, // same order & notes
-        ownerId: "anonymous", // ✅ no auth required
+        ownerId: "anonymous",
         isPublic: false, // copies start private
         transportMode: mode,
         roadCondition: roads,
-        estimatedDuration: trip.estimatedDuration,
-      } as const
+        estimatedDuration: (trip as any).estimatedDuration,
+      } as const;
 
-      const { id } = await createTrip(payload as any)
-      router.replace(`/trips/${id}`)
+      const { id } = await createTrip(payload as any);
+      router.replace(`/trips/${id}`);
     } catch (e: any) {
-      setError(e?.message || "Failed to duplicate trip.")
+      setError(e?.message || "Failed to duplicate trip.");
     } finally {
-      setDuplicating(false)
+      setDuplicating(false);
     }
-  }
+  };
+
+  const goBack = () => {
+    if (origin.canGoBack) {
+      router.back();
+    } else {
+      router.push(origin.href);
+    }
+  };
 
   if (loading) {
     return (
       <div className="container mx-auto px-4 py-8">
         <p className="text-muted-foreground">Loading trip…</p>
       </div>
-    )
+    );
   }
 
   if (error || !trip) {
     return (
       <div className="container mx-auto px-4 py-8 space-y-4">
-        <Button asChild variant="outline">
-          <Link href="/trips">
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Public Trips
-          </Link>
+        <Button variant="outline" onClick={goBack}>
+          <ArrowLeft className="mr-2 h-4 w-4" />
+          {origin.label}
         </Button>
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>{error ?? "Trip not found."}</AlertDescription>
         </Alert>
       </div>
-    )
+    );
   }
 
   return (
@@ -110,11 +192,9 @@ export default function TripDetailPage() {
       {/* Header actions */}
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
-          <Button asChild variant="outline" className="mb-3">
-            <Link href="/trips">
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to Public Trips
-            </Link>
+          <Button variant="outline" className="mb-3" onClick={goBack}>
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            {origin.label}
           </Button>
           <h1 className="text-3xl font-bold">{trip.name}</h1>
           {trip.description && (
@@ -216,7 +296,7 @@ export default function TripDetailPage() {
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }
 
 // Helper to render category via i18n (safe keys only)
@@ -227,6 +307,6 @@ function renderCategory(t: ReturnType<typeof useTranslation>["t"], cat: string) 
     cat === "nature" ? "category.nature" :
     cat === "food" ? "category.food" :
     cat === "memorials" ? "category.memorials" :
-    "category.nature"
-  return t(key)
+    "category.nature";
+  return t(key);
 }
