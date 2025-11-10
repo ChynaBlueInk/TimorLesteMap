@@ -19,16 +19,32 @@ type Props = {
 export default function TripPhotosUploader({ value = [], onChange, max = 12 }: Props) {
   const [photos, setPhotos] = useState<TripPhoto[]>(value)
 
-  useEffect(() => setPhotos(value), [value])
+  // keep local state in sync if parent updates value
+  useEffect(() => {
+    setPhotos(value || [])
+  }, [value])
 
   const commit = (next: TripPhoto[]) => {
-    setPhotos(next)
-    onChange?.(next)
+    const limited = next.slice(0, max)
+    setPhotos(limited)
+    onChange?.(limited)
   }
 
-  const addPhoto = (url: string) => {
-    if (!url || photos.length >= max) return
-    commit([...photos, { url }])
+  // When ImageUploader changes, it usually gives us the *full* list of URLs
+  const handleUploaderChange = (images: string[]) => {
+    if (!Array.isArray(images)) return
+
+    const cleaned = images
+      .filter((u) => typeof u === "string" && u.trim().length > 0)
+      .slice(0, max)
+
+    // Try to keep existing captions if URLs match
+    const next: TripPhoto[] = cleaned.map((url) => {
+      const existing = photos.find((p) => p.url === url)
+      return existing ?? { url }
+    })
+
+    commit(next)
   }
 
   const removeAt = (idx: number) => {
@@ -56,28 +72,39 @@ export default function TripPhotosUploader({ value = [], onChange, max = 12 }: P
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium">Trip photos</h3>
-        <span className="text-xs text-white/80">{photos.length}/{max}</span>
+        <span className="text-xs text-white/80">
+          {photos.length}/{max}
+        </span>
       </div>
 
       <div className="flex items-center gap-2">
-       <ImageUploader
-  value={photos.map((p) => p.url)}
-  onChange={(images: string[]) => {
-    if (images && images.length > 0) addPhoto(images[0])
-  }}
-/>
+        <ImageUploader
+          value={photos.map((p) => p.url)}
+          onChange={handleUploaderChange}
+        />
 
-        <Button type="button" variant="secondary" className="opacity-60 cursor-not-allowed" disabled>
+        {/* Keep this button disabled for now (placeholder feature) */}
+        <Button
+          type="button"
+          variant="secondary"
+          className="opacity-60 cursor-not-allowed"
+          disabled
+        >
           <Plus className="mr-2 h-4 w-4" /> Add placeholder
         </Button>
       </div>
 
       {photos.length === 0 ? (
-        <p className="text-sm text-white/80">No photos yet. Upload images to showcase this trip.</p>
+        <p className="text-sm text-white/80">
+          No photos yet. Upload images to showcase this trip.
+        </p>
       ) : (
         <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {photos.map((p, idx) => (
-            <li key={idx} className="border border-white/20 rounded-lg overflow-hidden bg-white/5">
+            <li
+              key={idx}
+              className="border border-white/20 rounded-lg overflow-hidden bg-white/5"
+            >
               <div className="relative aspect-[4/3] bg-black/10">
                 {!!p.url && (
                   <Image
