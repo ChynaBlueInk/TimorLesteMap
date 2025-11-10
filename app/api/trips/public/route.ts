@@ -11,14 +11,21 @@ export const dynamic = "force-dynamic";
 /** Validate env & normalize prefix */
 function requireEnv() {
   const REGION = (process.env.AWS_REGION || "").trim();
-  const BUCKET = (process.env.S3_TRIPS_BUCKET || "").trim(); // 👈 use trips bucket
+  // 👇 Try S3_TRIPS_BUCKET first, fall back to S3_BUCKET
+  const BUCKET = (
+    process.env.S3_TRIPS_BUCKET ||
+    process.env.S3_BUCKET ||
+    ""
+  ).trim();
   const RAW_PREFIX = (process.env.S3_TRIPS_PREFIX || "trips/").trim();
   const PREFIX = RAW_PREFIX.replace(/^\/+|\/+$/g, "") + "/";
 
   const miss: string[] = [];
   if (!REGION) miss.push("AWS_REGION");
-  if (!BUCKET) miss.push("S3_TRIPS_BUCKET");
-  if (miss.length) return { ok: false as const, error: `Missing env: ${miss.join(", ")}` };
+  if (!BUCKET) miss.push("S3_TRIPS_BUCKET or S3_BUCKET");
+  if (miss.length) {
+    return { ok: false as const, error: `Missing env: ${miss.join(", ")}` };
+  }
   return { ok: true as const, REGION, BUCKET, PREFIX };
 }
 
