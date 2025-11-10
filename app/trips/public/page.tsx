@@ -121,7 +121,8 @@ export default async function PublicTripsPage() {
                 : new Date(t.updatedAt ?? Date.now()).toLocaleDateString();
 
             return (
-              <Link key={t.id} href={`/trips/${t.id}`}>
+              // 👇 NOTE: added ?from=public here so the Return button knows where to go back to
+              <Link key={t.id} href={`/trips/${t.id}?from=public`}>
                 <Card className="h-full hover:shadow-md transition-shadow overflow-hidden">
                   {/* Cover image (uses <img> to avoid Next/Image remote config) */}
                   {t.coverUrl ? (
