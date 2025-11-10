@@ -11,21 +11,18 @@ export const dynamic = "force-dynamic";
 /** Validate env & normalize prefix */
 function requireEnv() {
   const REGION = (process.env.AWS_REGION || "").trim();
-  const BUCKET = (process.env.S3_BUCKET || "").trim();
+  const BUCKET = (process.env.S3_TRIPS_BUCKET || "").trim(); // 👈 use trips bucket
   const RAW_PREFIX = (process.env.S3_TRIPS_PREFIX || "trips/").trim();
   const PREFIX = RAW_PREFIX.replace(/^\/+|\/+$/g, "") + "/";
 
   const miss: string[] = [];
   if (!REGION) miss.push("AWS_REGION");
-  if (!BUCKET) miss.push("S3_BUCKET");
-  if (!process.env.AWS_ACCESS_KEY_ID) miss.push("AWS_ACCESS_KEY_ID");
-  if (!process.env.AWS_SECRET_ACCESS_KEY) miss.push("AWS_SECRET_ACCESS_KEY");
+  if (!BUCKET) miss.push("S3_TRIPS_BUCKET");
   if (miss.length) return { ok: false as const, error: `Missing env: ${miss.join(", ")}` };
   return { ok: true as const, REGION, BUCKET, PREFIX };
 }
 
 function client(region: string) {
-  // If you later move to R2, you can extend with endpoint + forcePathStyle here.
   return new S3Client({ region });
 }
 
@@ -82,9 +79,9 @@ export async function GET() {
       })
     );
 
-    // Only return public trips, and sort newest first
+    // Only return public trips, newest first
     const publicTrips = (trips || [])
-      .filter((t) => t?.isPublic !== false) // treat missing as public if you historically didn’t set it
+      .filter((t) => t?.isPublic !== false)
       .sort((a, b) => {
         const A = a.updatedAt ?? a.publishedAt ?? a.createdAt ?? 0;
         const B = b.updatedAt ?? b.publishedAt ?? b.createdAt ?? 0;
@@ -102,7 +99,10 @@ export async function GET() {
       code: err?.$metadata?.httpStatusCode,
     });
     return NextResponse.json(
-      { error: "Failed to list public trips", detail: err?.name || err?.message || "UnknownError" },
+      {
+        error: "Failed to list public trips",
+        detail: err?.name || err?.message || "UnknownError",
+      },
       { status: 500, headers: { "Cache-Control": "no-store" } }
     );
   }
